@@ -150,15 +150,22 @@ def _position_axis(
     half = size / 2
     fit_tolerance = 0.15  # accept "both walls fit" if their sum is within ±15% of size
 
+    # A wall farther from the label than the room's own size in that direction
+    # cannot be this room's own wall — it must belong to a neighbour or the
+    # building exterior beyond this room. Filter them out before anchoring.
+    if near_neg is not None and near_neg > size:
+        near_neg = None
+    if near_pos is not None and near_pos > size:
+        near_pos = None
+
     if near_neg is not None and near_pos is not None:
         total = near_neg + near_pos
         if abs(total - size) <= fit_tolerance * size:
             # Both walls match the nominal size — anchor to both
             return label_c - near_neg, label_c + near_pos, 2
-        # Both walls found but their sum disagrees with the labelled size. One
-        # ray probably slipped through a doorway and hit a neighbour's far
-        # wall. Anchor to whichever wall sits closest to the expected
-        # half-dimension — that's the credible room edge.
+        # Both walls found but their sum disagrees with the labelled size. Anchor
+        # to whichever wall sits closest to the expected half-dimension — that's
+        # the credible room edge.
         if abs(near_neg - half) <= abs(near_pos - half):
             return label_c - near_neg, label_c - near_neg + size, 1
         return label_c + near_pos - size, label_c + near_pos, 1
@@ -168,7 +175,7 @@ def _position_axis(
     if near_pos is not None:
         return label_c + near_pos - size, label_c + near_pos, 1
 
-    # No walls found — centre the rectangle on the label
+    # No walls found within the room's own size — centre the rectangle on the label
     return label_c - half, label_c + half, 0
 
 
@@ -203,14 +210,16 @@ def _snap_polygon_to_walls(
     is 0–4 — how many cardinal sides of the polygon came from real walls.
     """
     cx, cy = raw.x_in, raw.y_in
-    # Search broadly for walls — we're choosing position, not size, so a wall
-    # found anywhere within a few room-widths is useful information.
-    max_search = max(width_in, height_in) * 2.5
+    # Search only as far as the room's own size in each axis — a wall beyond
+    # that distance cannot belong to this room. Small buffer (1.1×) to allow
+    # for slight off-centre labels.
+    max_search_x = width_in * 1.1
+    max_search_y = height_in * 1.1
 
-    near_left = _ray_cast_to_wall(cx, cy, -1, 0, max_search, walls)
-    near_right = _ray_cast_to_wall(cx, cy, +1, 0, max_search, walls)
-    near_down = _ray_cast_to_wall(cx, cy, 0, -1, max_search, walls)
-    near_up = _ray_cast_to_wall(cx, cy, 0, +1, max_search, walls)
+    near_left = _ray_cast_to_wall(cx, cy, -1, 0, max_search_x, walls)
+    near_right = _ray_cast_to_wall(cx, cy, +1, 0, max_search_x, walls)
+    near_down = _ray_cast_to_wall(cx, cy, 0, -1, max_search_y, walls)
+    near_up = _ray_cast_to_wall(cx, cy, 0, +1, max_search_y, walls)
 
     x_lo, x_hi, x_walls = _position_axis(cx, float(width_in), near_left, near_right)
     y_lo, y_hi, y_walls = _position_axis(cy, float(height_in), near_down, near_up)
