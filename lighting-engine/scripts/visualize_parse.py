@@ -141,7 +141,7 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         f'width="{svg_w:.0f}" height="{svg_h:.0f}">',
         "<style>"
         ".wall-line { stroke: #6b6b6b; stroke-width: 1.2; }"
-        ".window-line { stroke: #2c8fd4; stroke-width: 2.2; }"
+        ".window-line { stroke: #1f7ad6; stroke-width: 4.0; stroke-linecap: round; }"
         ".room-poly { stroke: #2a2a2a; stroke-width: 1.5; fill-opacity: 0.18; }"
         ".room-label { font: 11px ui-sans-serif, system-ui; fill: #1a1a1a; "
         "text-anchor: middle; }"
@@ -155,15 +155,6 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
     for a, b in walls:
         parts.append(
             f'<line class="wall-line" x1="{x(a[0]):.1f}" y1="{y(a[1]):.1f}" '
-            f'x2="{x(b[0]):.1f}" y2="{y(b[1]):.1f}"/>'
-        )
-    parts.append("</g>")
-
-    # Windows (window/GLASS layer) — drawn in blue so you can see the glazing
-    parts.append('<g class="windows">')
-    for a, b in windows:
-        parts.append(
-            f'<line class="window-line" x1="{x(a[0]):.1f}" y1="{y(a[1]):.1f}" '
             f'x2="{x(b[0]):.1f}" y2="{y(b[1]):.1f}"/>'
         )
     parts.append("</g>")
@@ -184,6 +175,16 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         parts.append(
             f'<text class="room-label" x="{x(cx):.1f}" y="{y(cy):.1f}">'
             f"{html.escape(label)}</text>"
+        )
+    parts.append("</g>")
+
+    # Windows (window/GLASS layer) — drawn AFTER rooms so they stay visible
+    # on top of the translucent room polygons.
+    parts.append('<g class="windows">')
+    for a, b in windows:
+        parts.append(
+            f'<line class="window-line" x1="{x(a[0]):.1f}" y1="{y(a[1]):.1f}" '
+            f'x2="{x(b[0]):.1f}" y2="{y(b[1]):.1f}"/>'
         )
     parts.append("</g>")
 
