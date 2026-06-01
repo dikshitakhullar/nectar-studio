@@ -78,12 +78,6 @@ def _local_boundary_segments(
     return to_local(walls_raw), to_local(wins_raw)
 
 
-def _local_walls_in_meters(
-    dxf_path: Path,
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Back-compat shim — returns only walls."""
-    walls, _ = _local_boundary_segments(dxf_path)
-    return walls
 
 
 def _bounds(
