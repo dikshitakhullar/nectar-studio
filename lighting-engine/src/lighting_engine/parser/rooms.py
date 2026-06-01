@@ -193,7 +193,11 @@ def _snap_polygon_to_walls(
     # over a neighbour midpoint. Beyond that, the ray likely slipped through a
     # doorway and hit the next room's far wall — better to use the neighbour
     # midpoint as a Voronoi boundary instead.
-    wall_trust_ratio = 1.5
+    # 2.5 is permissive: real rooms can be larger than the label's nominal
+    # dimensions (architects often label usable area, not bbox). Tighter ratios
+    # caused real rooms (DINING, BAR, FAMILY LOUNGE on the Delhi file) to clip
+    # short of their actual walls.
+    wall_trust_ratio = 2.5
 
     def boundary(dx: int, dy: int, half_nom: float, perp_tol: float) -> tuple[float, bool]:
         wall = _ray_cast_to_wall(cx, cy, dx, dy, max_search, walls)
@@ -369,6 +373,15 @@ def extract_rooms(
         floor_level = floor_level_for_name(anchor.name)
         floor_walls = seg_buckets[floor_idx]
         floor_labels = label_buckets[floor_idx]
+
+        # Building envelope for this floor (in local-meter frame). Rooms can't
+        # extend past where the actual walls are — this prevents edge-of-building
+        # rooms from extruding outward into empty space when no wall stops the
+        # ray on their outer side.
+        envelope = _floor_envelope_meters(
+            floor_walls, region=region, dxf_unit_to_m=dxf_unit_to_m,
+        )
+
         # All label positions on this floor — each room sees the others as
         # potential boundary-stopping neighbours (Voronoi-clip on ray-cast).
         all_positions = [(r.x_in, r.y_in) for r, _, _, _ in floor_labels]
@@ -381,6 +394,8 @@ def extract_rooms(
                 raw, w_in, h_in, floor_walls, others,
                 region=region, dxf_unit_to_m=dxf_unit_to_m,
             )
+            if envelope is not None:
+                polygon = _clip_polygon_to_envelope(polygon, envelope)
             if snapped_sides < _MIN_SNAPPED_SIDES_TO_NOT_FALLBACK:
                 result.rect_fallback_room_ids.append(room_id)
             result.rooms.append(Room(
@@ -392,3 +407,49 @@ def extract_rooms(
                 ceiling_height_m=default_ceiling_height_m,
             ))
     return result
+
+
+def _floor_envelope_meters(
+    floor_walls: list[Segment],
+    *,
+    region: PlanRegion,
+    dxf_unit_to_m: float,
+) -> tuple[float, float, float, float] | None:
+    """Return (xmin, ymin, xmax, ymax) bbox of walls in local-meter frame."""
+    if not floor_walls:
+        return None
+    xs = [v for seg in floor_walls for v in (seg[0][0], seg[1][0])]
+    ys = [v for seg in floor_walls for v in (seg[0][1], seg[1][1])]
+    return (
+        (min(xs) - region.min_x) * dxf_unit_to_m,
+        (min(ys) - region.min_y) * dxf_unit_to_m,
+        (max(xs) - region.min_x) * dxf_unit_to_m,
+        (max(ys) - region.min_y) * dxf_unit_to_m,
+    )
+
+
+def _clip_polygon_to_envelope(
+    polygon: list[Point],
+    envelope: tuple[float, float, float, float],
+) -> list[Point]:
+    """Clamp each polygon vertex into the envelope bbox. Polygons are
+    axis-aligned 4-point rectangles in our pipeline so a per-vertex clamp is
+    equivalent to a proper rectangle-rectangle intersection.
+
+    If clipping would collapse a side to zero (room entirely outside envelope —
+    shouldn't happen given the parser flow), we leave the polygon untouched so
+    pydantic's polygon validator still passes.
+    """
+    env_xmin, env_ymin, env_xmax, env_ymax = envelope
+    clipped = [
+        Point(
+            x=max(env_xmin, min(env_xmax, p.x)),
+            y=max(env_ymin, min(env_ymax, p.y)),
+        )
+        for p in polygon
+    ]
+    xs = [p.x for p in clipped]
+    ys = [p.y for p in clipped]
+    if max(xs) - min(xs) < 1e-6 or max(ys) - min(ys) < 1e-6:
+        return polygon
+    return clipped
