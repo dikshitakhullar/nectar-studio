@@ -62,13 +62,9 @@ _TYPE_HINTS: list[tuple[tuple[str, ...], RoomType]] = [
     (("BALCONY", "TERRACE", "COURTYARD", "PORCH"),        RoomType.outdoor),
 ]
 
-# Accept a ray-cast wall hit only if it's within this ratio of the nominal
-# half-dimension. 0.5–1.5 = ±50% — generous enough for shape variation,
-# tight enough to reject walls of adjacent rooms or stray interior features.
-_HIT_RATIO_MIN = 0.5
-_HIT_RATIO_MAX = 1.5
-# A room needs at least this many sides snapped to real walls before we
-# consider it "wall-anchored" (vs. flagging as a label-rect fallback).
+# A room needs at least this many sides anchored to a wall or neighbour
+# midpoint before we consider it "snapped" (vs. flagging as a label-rect
+# fallback for the gaps report).
 _MIN_SNAPPED_SIDES_TO_NOT_FALLBACK = 2
 
 
@@ -137,38 +133,94 @@ def _ray_cast_to_wall(
     return best
 
 
+def _nearest_other_label(
+    cx: float, cy: float, dx: int, dy: int, max_dist: float,
+    others: Iterable[tuple[float, float]],
+    perp_tol: float,
+) -> float | None:
+    """Find the nearest OTHER label in the cardinal direction (dx, dy).
+
+    A neighbor counts as "in this direction" if its forward distance is
+    positive and its perpendicular offset from the ray is < perp_tol. Returns
+    the forward distance to the closest such neighbor, or None.
+    """
+    best: float | None = None
+    for lx, ly in others:
+        if dx != 0:
+            forward = (lx - cx) * dx
+            perp = abs(ly - cy)
+            if 0 < forward < max_dist and perp < perp_tol:
+                if best is None or forward < best:
+                    best = forward
+        if dy != 0:
+            forward = (ly - cy) * dy
+            perp = abs(lx - cx)
+            if 0 < forward < max_dist and perp < perp_tol:
+                if best is None or forward < best:
+                    best = forward
+    return best
+
+
 def _snap_polygon_to_walls(
     raw: RawLabel,
     width_in: int,
     height_in: int,
     walls: list[Segment],
+    other_label_positions: list[tuple[float, float]],
     *,
     region: PlanRegion,
     dxf_unit_to_m: float,
 ) -> tuple[list[Point], int]:
-    """Build a room polygon by snapping each side to the nearest wall.
+    """Build a room polygon bounded by the closer of: nearest wall, or midpoint
+    to the nearest neighbour label in each direction.
 
-    Returns (polygon_in_local_meters, snapped_sides_count). The polygon is
-    always a 4-point rectangle; `snapped_sides_count` is how many of its
-    four edges came from actual wall hits (the rest fell back to nominal).
+    The midpoint constraint solves two problems the wall-only ray-cast cannot:
+    (a) doorway openings let a ray run past the room's true wall into the next
+        room — the neighbour's midpoint stops the ray first;
+    (b) open-plan spaces have no walls between adjacent labels — the midpoint
+        becomes the boundary, ensuring rooms don't overlap.
+
+    Returns (polygon_in_local_meters, snapped_sides_count). `snapped_sides`
+    is how many of the four edges came from a wall OR a neighbour midpoint
+    (i.e. anchored to real geometry rather than nominal-label fallback).
     """
     cx, cy = raw.x_in, raw.y_in
     hw_nom = width_in / 2
     hh_nom = height_in / 2
     max_search = max(width_in, height_in) * 1.5
 
-    def pick(hit: float | None, half_nom: float) -> tuple[float, bool]:
-        if hit is None:
-            return half_nom, False
-        ratio = hit / half_nom
-        if _HIT_RATIO_MIN <= ratio <= _HIT_RATIO_MAX:
-            return hit, True
+    # If a wall is found within this multiple of the nominal half-dim, trust it
+    # over a neighbour midpoint. Beyond that, the ray likely slipped through a
+    # doorway and hit the next room's far wall — better to use the neighbour
+    # midpoint as a Voronoi boundary instead.
+    wall_trust_ratio = 1.5
+
+    def boundary(dx: int, dy: int, half_nom: float, perp_tol: float) -> tuple[float, bool]:
+        wall = _ray_cast_to_wall(cx, cy, dx, dy, max_search, walls)
+        neighbour = _nearest_other_label(
+            cx, cy, dx, dy, max_search, other_label_positions, perp_tol,
+        )
+        # 1. Wall within sensible range → trust it (architect's actual room boundary)
+        if wall is not None and wall <= wall_trust_ratio * half_nom:
+            return wall, True
+        # 2. No sensible wall → use neighbour midpoint (Voronoi boundary).
+        #    This handles open-plan spaces AND doorway slip-throughs where the
+        #    ray ran past the room's true wall into the neighbour's space.
+        if neighbour is not None:
+            return neighbour / 2, True
+        # 3. No neighbour either → use the wall even if far (better than nothing)
+        if wall is not None:
+            return wall, True
+        # 4. Nothing at all → fall back to nominal half-dim
         return half_nom, False
 
-    left, l_ok = pick(_ray_cast_to_wall(cx, cy, -1, 0, max_search, walls), hw_nom)
-    right, r_ok = pick(_ray_cast_to_wall(cx, cy, +1, 0, max_search, walls), hw_nom)
-    down, d_ok = pick(_ray_cast_to_wall(cx, cy, 0, -1, max_search, walls), hh_nom)
-    up, u_ok = pick(_ray_cast_to_wall(cx, cy, 0, +1, max_search, walls), hh_nom)
+    # Perp tolerance = the *other* nominal dim. A horizontal neighbour counts
+    # if its Y is within this room's height; a vertical neighbour if its X is
+    # within this room's width.
+    left, l_ok = boundary(-1, 0, hw_nom, perp_tol=height_in)
+    right, r_ok = boundary(+1, 0, hw_nom, perp_tol=height_in)
+    down, d_ok = boundary(0, -1, hh_nom, perp_tol=width_in)
+    up, u_ok = boundary(0, +1, hh_nom, perp_tol=width_in)
 
     # Convert to local-meter frame
     x_min = (cx - left - region.min_x) * dxf_unit_to_m
@@ -316,11 +368,17 @@ def extract_rooms(
     for floor_idx, anchor in enumerate(anchors):
         floor_level = floor_level_for_name(anchor.name)
         floor_walls = seg_buckets[floor_idx]
-        for raw, name, w_in, h_in in label_buckets[floor_idx]:
+        floor_labels = label_buckets[floor_idx]
+        # All label positions on this floor — each room sees the others as
+        # potential boundary-stopping neighbours (Voronoi-clip on ray-cast).
+        all_positions = [(r.x_in, r.y_in) for r, _, _, _ in floor_labels]
+        for raw, name, w_in, h_in in floor_labels:
             room_id = _slugify(name, room_counter)
             room_counter += 1
+            my_pos = (raw.x_in, raw.y_in)
+            others = [p for p in all_positions if p != my_pos]
             polygon, snapped_sides = _snap_polygon_to_walls(
-                raw, w_in, h_in, floor_walls,
+                raw, w_in, h_in, floor_walls, others,
                 region=region, dxf_unit_to_m=dxf_unit_to_m,
             )
             if snapped_sides < _MIN_SNAPPED_SIDES_TO_NOT_FALLBACK:
