@@ -448,6 +448,11 @@ def _clip_polygon_to_envelope(
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
 
+    # Degenerate setup (synthetic tests, weird DXFs): polygon doesn't overlap
+    # the envelope at all. Leave polygon alone — slide/clamp would corrupt it.
+    if maxx < env_xmin or minx > env_xmax or maxy < env_ymin or miny > env_ymax:
+        return polygon
+
     dx = 0.0
     if maxx > env_xmax:
         dx = env_xmax - maxx          # negative → slide left
