@@ -27,38 +27,63 @@ _PALETTE = [
 ]
 
 
-def _local_walls_in_meters(
+def _local_boundary_segments(
     dxf_path: Path,
-) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    """Return wall segments in local-meter frame."""
+) -> tuple[
+    list[tuple[tuple[float, float], tuple[float, float]]],
+    list[tuple[tuple[float, float], tuple[float, float]]],
+]:
+    """Return (walls, windows) as segment lists in the local-meter frame.
+
+    Windows are pulled from the `window` / `GLASS` layers so the visualiser
+    can show where actual glazing is in the source drawing — a debugging aid
+    to verify the window-as-boundary signal is finding the right openings.
+    """
     load = load_drawing(dxf_path)
     doc = load.document
     msp = doc.modelspace()
     layer_roles = classify_layers([layer.dxf.name for layer in doc.layers])
     wall_layers = set(layer_roles.get(LayerRole.wall, []))
-    raw: list[tuple[tuple[float, float], tuple[float, float]]] = [
-        (
+    window_layers = set(layer_roles.get(LayerRole.window, []))
+
+    walls_raw: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    wins_raw: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    for e in msp.query("LINE"):
+        seg = (
             (float(e.dxf.start.x), float(e.dxf.start.y)),
             (float(e.dxf.end.x), float(e.dxf.end.y)),
         )
-        for e in msp.query("LINE")
-        if e.dxf.layer in wall_layers
-    ]
-    centroids = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in raw]
+        if e.dxf.layer in wall_layers:
+            walls_raw.append(seg)
+        elif e.dxf.layer in window_layers:
+            wins_raw.append(seg)
+
+    centroids = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in walls_raw]
     if not centroids:
-        return []
+        return [], []
     region = find_plan_region(centroids)
-    in_region = [
-        (a, b) for a, b in raw
-        if region.contains(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
-    ]
-    return [
-        (
-            ((a[0] - region.min_x) * INCH_TO_M, (a[1] - region.min_y) * INCH_TO_M),
-            ((b[0] - region.min_x) * INCH_TO_M, (b[1] - region.min_y) * INCH_TO_M),
-        )
-        for a, b in in_region
-    ]
+
+    def to_local(segs: list[tuple[tuple[float, float], tuple[float, float]]]) -> list[
+        tuple[tuple[float, float], tuple[float, float]]
+    ]:
+        return [
+            (
+                ((a[0] - region.min_x) * INCH_TO_M, (a[1] - region.min_y) * INCH_TO_M),
+                ((b[0] - region.min_x) * INCH_TO_M, (b[1] - region.min_y) * INCH_TO_M),
+            )
+            for a, b in segs
+            if region.contains(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
+        ]
+
+    return to_local(walls_raw), to_local(wins_raw)
+
+
+def _local_walls_in_meters(
+    dxf_path: Path,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Back-compat shim — returns only walls."""
+    walls, _ = _local_boundary_segments(dxf_path)
+    return walls
 
 
 def _bounds(
@@ -81,7 +106,7 @@ def _bounds(
 
 
 def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
-    walls = _local_walls_in_meters(dxf_path)
+    walls, windows = _local_boundary_segments(dxf_path)
     minx, miny, maxx, maxy = _bounds(walls, project)
     width = maxx - minx
     height = maxy - miny
@@ -101,6 +126,7 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         f'width="{svg_w:.0f}" height="{svg_h:.0f}">',
         "<style>"
         ".wall-line { stroke: #6b6b6b; stroke-width: 1.2; }"
+        ".window-line { stroke: #2c8fd4; stroke-width: 2.2; }"
         ".room-poly { stroke: #2a2a2a; stroke-width: 1.5; fill-opacity: 0.18; }"
         ".room-label { font: 11px ui-sans-serif, system-ui; fill: #1a1a1a; "
         "text-anchor: middle; }"
@@ -114,6 +140,15 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
     for a, b in walls:
         parts.append(
             f'<line class="wall-line" x1="{x(a[0]):.1f}" y1="{y(a[1]):.1f}" '
+            f'x2="{x(b[0]):.1f}" y2="{y(b[1]):.1f}"/>'
+        )
+    parts.append("</g>")
+
+    # Windows (window/GLASS layer) — drawn in blue so you can see the glazing
+    parts.append('<g class="windows">')
+    for a, b in windows:
+        parts.append(
+            f'<line class="window-line" x1="{x(a[0]):.1f}" y1="{y(a[1]):.1f}" '
             f'x2="{x(b[0]):.1f}" y2="{y(b[1]):.1f}"/>'
         )
     parts.append("</g>")
