@@ -9,7 +9,9 @@ from lighting_engine.parser.wall_graph import (
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "dwgs"
 
 
-def _square_segments(x0: float, y0: float, side: float) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+def _square_segments(
+    x0: float, y0: float, side: float
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
     return [
         ((x0, y0), (x0 + side, y0)),
         ((x0 + side, y0), (x0 + side, y0 + side)),

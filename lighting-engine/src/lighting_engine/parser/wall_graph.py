@@ -13,8 +13,10 @@ unit conversion happens elsewhere when building the IR.
 """
 
 from collections.abc import Iterable
+from typing import cast
 
-from shapely.geometry import LineString, Point as ShapelyPoint
+from shapely.geometry import LineString
+from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry.polygon import Polygon
 from shapely.ops import polygonize, unary_union
 
@@ -44,12 +46,15 @@ def _mbr_aspect_ratio(face: Polygon) -> float:
     Used to distinguish room interiors (≤ ~4:1, even long corridors) from
     wall-thickness slivers (often 20:1 or more).
     """
-    mbr = face.minimum_rotated_rectangle
+    mbr = cast(Polygon, face.minimum_rotated_rectangle)
     coords = list(mbr.exterior.coords)
     if len(coords) < 4:
         return float("inf")
-    side1 = ShapelyPoint(coords[0]).distance(ShapelyPoint(coords[1]))
-    side2 = ShapelyPoint(coords[1]).distance(ShapelyPoint(coords[2]))
+    p0 = (float(coords[0][0]), float(coords[0][1]))
+    p1 = (float(coords[1][0]), float(coords[1][1]))
+    p2 = (float(coords[2][0]), float(coords[2][1]))
+    side1 = ShapelyPoint(p0[0], p0[1]).distance(ShapelyPoint(p1[0], p1[1]))
+    side2 = ShapelyPoint(p1[0], p1[1]).distance(ShapelyPoint(p2[0], p2[1]))
     long_side, short_side = max(side1, side2), min(side1, side2)
     return long_side / short_side if short_side > 0 else float("inf")
 
@@ -71,10 +76,11 @@ def extract_room_faces(
     snapped = _snap_to_grid(segments, snap_tolerance) if snap_tolerance > 0 else list(segments)
     if not snapped:
         return []
-    linestrings = [LineString([a, b]) for a, b in snapped]
+    linestrings: list[LineString] = [LineString([a, b]) for a, b in snapped]
     # unary_union breaks lines at intersections so polygonize sees every closed face
     merged = unary_union(linestrings)
-    candidates = [g for g in polygonize(merged) if g.is_valid and g.area >= min_area]
+    raw_faces: list[Polygon] = list(polygonize(merged))
+    candidates = [g for g in raw_faces if g.is_valid and g.area >= min_area]
     return [g for g in candidates if _mbr_aspect_ratio(g) <= max_aspect_ratio]
 
 
