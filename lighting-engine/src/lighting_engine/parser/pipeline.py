@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from ezdxf.entities.insert import Insert
+from ezdxf.entities.lwpolyline import LWPolyline
 from ezdxf.layouts.layout import Modelspace
 
 from lighting_engine.models.gaps import (
@@ -44,10 +45,12 @@ def _wall_segments(
     for e in msp.query("LWPOLYLINE"):
         if e.dxf.layer not in wall_layers:
             continue
+        if not isinstance(e, LWPolyline):
+            continue
         verts = [(float(v[0]), float(v[1])) for v in e.get_points()]
         for i in range(len(verts) - 1):
             out.append((verts[i], verts[i + 1]))
-        if getattr(e, "closed", False) and len(verts) >= 3:
+        if e.closed and len(verts) >= 3:
             out.append((verts[-1], verts[0]))
     return out
 

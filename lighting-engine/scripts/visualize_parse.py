@@ -14,6 +14,8 @@ import argparse
 import html
 from pathlib import Path
 
+from ezdxf.entities.lwpolyline import LWPolyline
+
 from lighting_engine.models.geometry import Project
 from lighting_engine.parser.geometry import find_plan_region
 from lighting_engine.parser.layers import LayerRole, classify_layers
@@ -62,6 +64,8 @@ def _local_boundary_segments(
     # Many windows are drawn as closed LWPolyline frames, not loose lines —
     # decompose their edges so the visualiser shows them.
     for e in msp.query("LWPOLYLINE"):
+        if not isinstance(e, LWPolyline):
+            continue
         target = (
             walls_raw if e.dxf.layer in wall_layers
             else wins_raw if e.dxf.layer in window_layers
@@ -72,7 +76,7 @@ def _local_boundary_segments(
         verts = [(float(v[0]), float(v[1])) for v in e.get_points()]
         for i in range(len(verts) - 1):
             target.append((verts[i], verts[i + 1]))
-        if getattr(e, "closed", False) and len(verts) >= 3:
+        if e.closed and len(verts) >= 3:
             target.append((verts[-1], verts[0]))
 
     centroids = [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in walls_raw]
