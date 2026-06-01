@@ -3,7 +3,7 @@
 Units throughout this module are SI (meters) and degrees. Coordinates are in a
 plan-local frame whose origin is the bottom-left of the detected plan region.
 """
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -14,7 +14,7 @@ class Point(BaseModel):
     y: float
 
 
-class RoomType(str, Enum):
+class RoomType(StrEnum):
     living = "living"
     dining = "dining"
     bedroom = "bedroom"
@@ -28,7 +28,7 @@ class RoomType(str, Enum):
     unknown = "unknown"
 
 
-class DoorSwing(str, Enum):
+class DoorSwing(StrEnum):
     in_ = "in"
     out = "out"
     sliding = "sliding"
