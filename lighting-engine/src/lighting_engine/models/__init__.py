@@ -15,3 +15,12 @@ __all__ = [
     "CeilingFeature", "Door", "DoorSwing", "Fixture", "Furniture",
     "Point", "Project", "Room", "RoomType", "Window",
 ]
+
+from lighting_engine.models.gaps import (
+    ExtractionSummary,
+    GapsReport,
+    MissingItem,
+    Severity,
+)
+
+__all__ += ["ExtractionSummary", "GapsReport", "MissingItem", "Severity"]
