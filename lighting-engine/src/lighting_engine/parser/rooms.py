@@ -392,6 +392,14 @@ def extract_rooms(
                 raw, w_in, h_in, floor_walls, others,
                 region=region, dxf_unit_to_m=dxf_unit_to_m,
             )
+            # Hard-clip against any wall found within a wider search range —
+            # catches walls beyond the room's own size that still bound where
+            # the polygon can extend (e.g. building exterior past a 5×5 LIFT).
+            polygon = _hard_clip_to_nearby_walls(
+                polygon, raw.x_in, raw.y_in, floor_walls,
+                region=region, dxf_unit_to_m=dxf_unit_to_m,
+                clip_search=max(w_in, h_in) * 5.0,
+            )
             if envelope is not None:
                 polygon = _clip_polygon_to_envelope(polygon, envelope)
             if snapped_sides < _MIN_SNAPPED_SIDES_TO_NOT_FALLBACK:
@@ -430,20 +438,81 @@ def _clip_polygon_to_envelope(
     polygon: list[Point],
     envelope: tuple[float, float, float, float],
 ) -> list[Point]:
-    """Clamp each polygon vertex into the envelope bbox. Polygons are
-    axis-aligned 4-point rectangles in our pipeline so a per-vertex clamp is
-    equivalent to a proper rectangle-rectangle intersection.
-
-    If clipping would collapse a side to zero (room entirely outside envelope —
-    shouldn't happen given the parser flow), we leave the polygon untouched so
-    pydantic's polygon validator still passes.
+    """Slide an axis-aligned rectangle inward if it extrudes past the envelope,
+    preserving its size. Falls back to a per-vertex clamp if sliding can't fit
+    the polygon (room wider than envelope).
     """
     env_xmin, env_ymin, env_xmax, env_ymax = envelope
+    xs = [p.x for p in polygon]
+    ys = [p.y for p in polygon]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+
+    dx = 0.0
+    if maxx > env_xmax:
+        dx = env_xmax - maxx          # negative → slide left
+    elif minx < env_xmin:
+        dx = env_xmin - minx          # positive → slide right
+    dy = 0.0
+    if maxy > env_ymax:
+        dy = env_ymax - maxy
+    elif miny < env_ymin:
+        dy = env_ymin - miny
+
+    if dx == 0.0 and dy == 0.0:
+        return polygon
+
+    slid = [Point(x=p.x + dx, y=p.y + dy) for p in polygon]
+    # After slide, did the polygon now extrude the OPPOSITE side? Then it's
+    # genuinely wider than the envelope and we fall back to a clamp.
+    sxs = [p.x for p in slid]
+    sys = [p.y for p in slid]
+    if (min(sxs) < env_xmin - 1e-6 or max(sxs) > env_xmax + 1e-6
+            or min(sys) < env_ymin - 1e-6 or max(sys) > env_ymax + 1e-6):
+        return [
+            Point(
+                x=max(env_xmin, min(env_xmax, p.x)),
+                y=max(env_ymin, min(env_ymax, p.y)),
+            )
+            for p in polygon
+        ]
+    return slid
+
+
+def _hard_clip_to_nearby_walls(
+    polygon: list[Point],
+    cx: float, cy: float,
+    walls: list[Segment],
+    *,
+    region: PlanRegion,
+    dxf_unit_to_m: float,
+    clip_search: float,
+) -> list[Point]:
+    """If the polygon extends past ANY wall found within `clip_search` of the
+    label (a much wider search than the anchoring step uses), clip that side
+    back to the wall. Catches walls that were too far to anchor against but
+    still bound the room's actual extent.
+    """
+    far_l = _ray_cast_to_wall(cx, cy, -1, 0, clip_search, walls)
+    far_r = _ray_cast_to_wall(cx, cy, +1, 0, clip_search, walls)
+    far_d = _ray_cast_to_wall(cx, cy, 0, -1, clip_search, walls)
+    far_u = _ray_cast_to_wall(cx, cy, 0, +1, clip_search, walls)
+    cx_m = (cx - region.min_x) * dxf_unit_to_m
+    cy_m = (cy - region.min_y) * dxf_unit_to_m
+    clip_xmin = cx_m - far_l * dxf_unit_to_m if far_l is not None else None
+    clip_xmax = cx_m + far_r * dxf_unit_to_m if far_r is not None else None
+    clip_ymin = cy_m - far_d * dxf_unit_to_m if far_d is not None else None
+    clip_ymax = cy_m + far_u * dxf_unit_to_m if far_u is not None else None
+
+    def clamp(v: float, lo: float | None, hi: float | None) -> float:
+        if lo is not None:
+            v = max(v, lo)
+        if hi is not None:
+            v = min(v, hi)
+        return v
+
     clipped = [
-        Point(
-            x=max(env_xmin, min(env_xmax, p.x)),
-            y=max(env_ymin, min(env_ymax, p.y)),
-        )
+        Point(x=clamp(p.x, clip_xmin, clip_xmax), y=clamp(p.y, clip_ymin, clip_ymax))
         for p in polygon
     ]
     xs = [p.x for p in clipped]
