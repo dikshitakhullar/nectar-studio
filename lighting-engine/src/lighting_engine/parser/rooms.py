@@ -392,14 +392,6 @@ def extract_rooms(
                 raw, w_in, h_in, floor_walls, others,
                 region=region, dxf_unit_to_m=dxf_unit_to_m,
             )
-            # Hard-clip against any wall found within a wider search range —
-            # catches walls beyond the room's own size that still bound where
-            # the polygon can extend (e.g. building exterior past a 5×5 LIFT).
-            polygon = _hard_clip_to_nearby_walls(
-                polygon, raw.x_in, raw.y_in, floor_walls,
-                region=region, dxf_unit_to_m=dxf_unit_to_m,
-                clip_search=max(w_in, h_in) * 5.0,
-            )
             if envelope is not None:
                 polygon = _clip_polygon_to_envelope(polygon, envelope)
             if snapped_sides < _MIN_SNAPPED_SIDES_TO_NOT_FALLBACK:
