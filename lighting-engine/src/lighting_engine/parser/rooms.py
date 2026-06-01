@@ -149,15 +149,15 @@ def _nearest_other_label(
         if dx != 0:
             forward = (lx - cx) * dx
             perp = abs(ly - cy)
-            if 0 < forward < max_dist and perp < perp_tol:
-                if best is None or forward < best:
-                    best = forward
+            if (0 < forward < max_dist and perp < perp_tol
+                    and (best is None or forward < best)):
+                best = forward
         if dy != 0:
             forward = (ly - cy) * dy
             perp = abs(lx - cx)
-            if 0 < forward < max_dist and perp < perp_tol:
-                if best is None or forward < best:
-                    best = forward
+            if (0 < forward < max_dist and perp < perp_tol
+                    and (best is None or forward < best)):
+                best = forward
     return best
 
 
