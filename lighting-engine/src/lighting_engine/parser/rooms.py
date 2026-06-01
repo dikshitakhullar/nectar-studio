@@ -133,32 +133,43 @@ def _ray_cast_to_wall(
     return best
 
 
-def _nearest_other_label(
-    cx: float, cy: float, dx: int, dy: int, max_dist: float,
-    others: Iterable[tuple[float, float]],
-    perp_tol: float,
-) -> float | None:
-    """Find the nearest OTHER label in the cardinal direction (dx, dy).
+def _position_axis(
+    label_c: float, size: float,
+    near_neg: float | None, near_pos: float | None,
+) -> tuple[float, float, int]:
+    """Position a 1D rectangle of length `size` along an axis.
 
-    A neighbor counts as "in this direction" if its forward distance is
-    positive and its perpendicular offset from the ray is < perp_tol. Returns
-    the forward distance to the closest such neighbor, or None.
+    The rectangle's length is FIXED at `size` (the architect's declared
+    dimension). We only choose where along the axis to place it, anchoring to
+    walls when they exist.
+
+    Returns (low_coord, high_coord, walls_used). `walls_used` is 0/1/2 — how
+    many cardinal walls actually anchored the position (0 = pure label-rect
+    fallback; 2 = both walls confirmed the size).
     """
-    best: float | None = None
-    for lx, ly in others:
-        if dx != 0:
-            forward = (lx - cx) * dx
-            perp = abs(ly - cy)
-            if (0 < forward < max_dist and perp < perp_tol
-                    and (best is None or forward < best)):
-                best = forward
-        if dy != 0:
-            forward = (ly - cy) * dy
-            perp = abs(lx - cx)
-            if (0 < forward < max_dist and perp < perp_tol
-                    and (best is None or forward < best)):
-                best = forward
-    return best
+    half = size / 2
+    fit_tolerance = 0.15  # accept "both walls fit" if their sum is within ±15% of size
+
+    if near_neg is not None and near_pos is not None:
+        total = near_neg + near_pos
+        if abs(total - size) <= fit_tolerance * size:
+            # Both walls match the nominal size — anchor to both
+            return label_c - near_neg, label_c + near_pos, 2
+        # Both walls found but their sum disagrees with the labelled size. One
+        # ray probably slipped through a doorway and hit a neighbour's far
+        # wall. Anchor to whichever wall sits closest to the expected
+        # half-dimension — that's the credible room edge.
+        if abs(near_neg - half) <= abs(near_pos - half):
+            return label_c - near_neg, label_c - near_neg + size, 1
+        return label_c + near_pos - size, label_c + near_pos, 1
+
+    if near_neg is not None:
+        return label_c - near_neg, label_c - near_neg + size, 1
+    if near_pos is not None:
+        return label_c + near_pos - size, label_c + near_pos, 1
+
+    # No walls found — centre the rectangle on the label
+    return label_c - half, label_c + half, 0
 
 
 def _snap_polygon_to_walls(
@@ -166,78 +177,56 @@ def _snap_polygon_to_walls(
     width_in: int,
     height_in: int,
     walls: list[Segment],
-    other_label_positions: list[tuple[float, float]],
+    other_label_positions: list[tuple[float, float]],  # noqa: ARG001
     *,
     region: PlanRegion,
     dxf_unit_to_m: float,
 ) -> tuple[list[Point], int]:
-    """Build a room polygon bounded by the closer of: nearest wall, or midpoint
-    to the nearest neighbour label in each direction.
+    """Build a room polygon at the architect's declared dimensions, anchored to walls.
 
-    The midpoint constraint solves two problems the wall-only ray-cast cannot:
-    (a) doorway openings let a ray run past the room's true wall into the next
-        room — the neighbour's midpoint stops the ray first;
-    (b) open-plan spaces have no walls between adjacent labels — the midpoint
-        becomes the boundary, ensuring rooms don't overlap.
+    The room SIZE is taken as truth from the label's nominal width × height.
+    We then position that fixed-size rectangle by finding nearby walls and
+    snapping the rectangle's edges to them. If both walls on an axis sum to
+    the labelled width, we anchor to both. If only one wall is found (or they
+    disagree), we anchor to whichever wall is most credible (closest to the
+    expected half-dimension) and extend the rectangle by the labelled width.
 
-    Returns (polygon_in_local_meters, snapped_sides_count). `snapped_sides`
-    is how many of the four edges came from a wall OR a neighbour midpoint
-    (i.e. anchored to real geometry rather than nominal-label fallback).
+    This is more reliable than letting ray-cast distances determine room SIZE —
+    the architect already declared the size in the label, so we use that as
+    ground truth and only infer position from the walls.
+
+    `other_label_positions` is unused in v2 of this algorithm (kept in the
+    signature for backwards compatibility with the floors/extract_rooms call
+    site, which still passes neighbour positions).
+
+    Returns (polygon_in_local_meters, walls_anchored_count). `walls_anchored`
+    is 0–4 — how many cardinal sides of the polygon came from real walls.
     """
     cx, cy = raw.x_in, raw.y_in
-    hw_nom = width_in / 2
-    hh_nom = height_in / 2
-    max_search = max(width_in, height_in) * 1.5
+    # Search broadly for walls — we're choosing position, not size, so a wall
+    # found anywhere within a few room-widths is useful information.
+    max_search = max(width_in, height_in) * 2.5
 
-    # If a wall is found within this multiple of the nominal half-dim, trust it
-    # over a neighbour midpoint. Beyond that, the ray likely slipped through a
-    # doorway and hit the next room's far wall — better to use the neighbour
-    # midpoint as a Voronoi boundary instead.
-    # 2.5 is permissive: real rooms can be larger than the label's nominal
-    # dimensions (architects often label usable area, not bbox). Tighter ratios
-    # caused real rooms (DINING, BAR, FAMILY LOUNGE on the Delhi file) to clip
-    # short of their actual walls.
-    wall_trust_ratio = 2.5
+    near_left = _ray_cast_to_wall(cx, cy, -1, 0, max_search, walls)
+    near_right = _ray_cast_to_wall(cx, cy, +1, 0, max_search, walls)
+    near_down = _ray_cast_to_wall(cx, cy, 0, -1, max_search, walls)
+    near_up = _ray_cast_to_wall(cx, cy, 0, +1, max_search, walls)
 
-    def boundary(dx: int, dy: int, half_nom: float, perp_tol: float) -> tuple[float, bool]:
-        wall = _ray_cast_to_wall(cx, cy, dx, dy, max_search, walls)
-        neighbour = _nearest_other_label(
-            cx, cy, dx, dy, max_search, other_label_positions, perp_tol,
-        )
-        # 1. Wall within sensible range → trust it (architect's actual room boundary)
-        if wall is not None and wall <= wall_trust_ratio * half_nom:
-            return wall, True
-        # 2. No sensible wall → use neighbour midpoint (Voronoi boundary).
-        #    This handles open-plan spaces AND doorway slip-throughs where the
-        #    ray ran past the room's true wall into the neighbour's space.
-        if neighbour is not None:
-            return neighbour / 2, True
-        # 3. No neighbour either → use the wall even if far (better than nothing)
-        if wall is not None:
-            return wall, True
-        # 4. Nothing at all → fall back to nominal half-dim
-        return half_nom, False
-
-    # Perp tolerance = the *other* nominal dim. A horizontal neighbour counts
-    # if its Y is within this room's height; a vertical neighbour if its X is
-    # within this room's width.
-    left, l_ok = boundary(-1, 0, hw_nom, perp_tol=height_in)
-    right, r_ok = boundary(+1, 0, hw_nom, perp_tol=height_in)
-    down, d_ok = boundary(0, -1, hh_nom, perp_tol=width_in)
-    up, u_ok = boundary(0, +1, hh_nom, perp_tol=width_in)
+    x_lo, x_hi, x_walls = _position_axis(cx, float(width_in), near_left, near_right)
+    y_lo, y_hi, y_walls = _position_axis(cy, float(height_in), near_down, near_up)
 
     # Convert to local-meter frame
-    x_min = (cx - left - region.min_x) * dxf_unit_to_m
-    x_max = (cx + right - region.min_x) * dxf_unit_to_m
-    y_min = (cy - down - region.min_y) * dxf_unit_to_m
-    y_max = (cy + up - region.min_y) * dxf_unit_to_m
+    x_min = (x_lo - region.min_x) * dxf_unit_to_m
+    x_max = (x_hi - region.min_x) * dxf_unit_to_m
+    y_min = (y_lo - region.min_y) * dxf_unit_to_m
+    y_max = (y_hi - region.min_y) * dxf_unit_to_m
     polygon = [
         Point(x=x_min, y=y_min),
         Point(x=x_max, y=y_min),
         Point(x=x_max, y=y_max),
         Point(x=x_min, y=y_max),
     ]
-    return polygon, sum([l_ok, r_ok, d_ok, u_ok])
+    return polygon, x_walls + y_walls
 
 
 def _select_main_sheet(
