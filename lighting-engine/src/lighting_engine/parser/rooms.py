@@ -13,6 +13,7 @@ This is per-floor: if FLOOR text labels are present, each wall and label is
 assigned to its nearest anchor and the ray-cast runs independently per floor.
 """
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -21,6 +22,12 @@ from ezdxf.entities.text import Text
 from ezdxf.layouts.layout import Modelspace
 
 from lighting_engine.models.geometry import Point, Room, RoomType
+from lighting_engine.parser.floors import (
+    FloorAnchor,
+    detect_floor_anchors,
+    floor_level_for_name,
+    nearest_anchor_index,
+)
 from lighting_engine.parser.geometry import PlanRegion
 from lighting_engine.parser.mtext import parse_room_label
 from lighting_engine.parser.wall_graph import Segment
@@ -177,6 +184,71 @@ def _snap_polygon_to_walls(
     return polygon, sum([l_ok, r_ok, d_ok, u_ok])
 
 
+def _select_main_sheet(
+    anchors: list[FloorAnchor],
+    labels: list[tuple[RawLabel, str, int, int]],
+    segments: list[Segment],
+    *,
+    same_sheet_y_gap: float = 500.0,
+) -> tuple[list[FloorAnchor], list[tuple[RawLabel, str, int, int]], list[Segment]]:
+    """Drop duplicate sheets when one DXF contains the same plan drawn twice.
+
+    Many architectural DXFs contain multiple "sheets" laid out side by side
+    (e.g. a base architectural sheet and an annotated one) — each with its own
+    set of FLOOR labels. We detect duplicate sheets by name-counting: if two
+    or more floor anchors share a name (e.g. two 'GROUND FLOOR' labels), we
+    cluster anchors by Y, pick the sheet with the most labels, and drop
+    everything else.
+
+    Returns (kept_anchors, kept_labels, kept_segments). If no duplicate sheets
+    are detected the input is returned unchanged.
+    """
+    if not anchors:
+        return anchors, labels, segments
+    name_counts = Counter(a.name for a in anchors)
+    if max(name_counts.values()) < 2:
+        return anchors, labels, segments
+
+    # Y-cluster the anchors so each cluster is one sheet
+    sorted_anchors = sorted(anchors, key=lambda a: a.y)
+    sheets: list[list[FloorAnchor]] = [[sorted_anchors[0]]]
+    for a in sorted_anchors[1:]:
+        if a.y - sheets[-1][-1].y > same_sheet_y_gap:
+            sheets.append([a])
+        else:
+            sheets[-1].append(a)
+    if len(sheets) < 2:
+        return anchors, labels, segments
+
+    # Boundaries between sheets = midpoint between adjacent sheet Y centres
+    centres = [sum(a.y for a in s) / len(s) for s in sheets]
+
+    def sheet_y_range(i: int) -> tuple[float, float]:
+        ymin = float("-inf") if i == 0 else (centres[i - 1] + centres[i]) / 2
+        ymax = float("inf") if i == len(sheets) - 1 else (centres[i] + centres[i + 1]) / 2
+        return ymin, ymax
+
+    # Pick the sheet whose Y band contains the most labels
+    best_i = 0
+    best_count = -1
+    for i in range(len(sheets)):
+        ymin, ymax = sheet_y_range(i)
+        n = sum(1 for raw, *_ in labels if ymin <= raw.y_in <= ymax)
+        if n > best_count:
+            best_count = n
+            best_i = i
+
+    ymin, ymax = sheet_y_range(best_i)
+    kept_anchors = sheets[best_i]
+    kept_labels = [item for item in labels if ymin <= item[0].y_in <= ymax]
+    kept_segments = [
+        ((x1, y1), (x2, y2))
+        for ((x1, y1), (x2, y2)) in segments
+        if ymin <= (y1 + y2) / 2 <= ymax
+    ]
+    return kept_anchors, kept_labels, kept_segments
+
+
 def extract_rooms(
     msp: Modelspace,
     region: PlanRegion,
@@ -186,13 +258,6 @@ def extract_rooms(
     dxf_unit_to_m: float = 0.0254,
 ) -> ExtractRoomsResult:
     """Extract `Room` objects per floor by ray-casting labels to nearest walls."""
-    from lighting_engine.parser.floors import (
-        FloorAnchor,
-        detect_floor_anchors,
-        floor_level_for_name,
-        nearest_anchor_index,
-    )
-
     in_region_segments = [
         ((x1, y1), (x2, y2))
         for (x1, y1), (x2, y2) in wall_segments
@@ -213,6 +278,12 @@ def extract_rooms(
             y=(region.min_y + region.max_y) / 2,
         )]
 
+    # If multiple anchors share a name, we have a multi-sheet DXF — keep only
+    # the densest sheet so each room is counted once.
+    anchors, in_region_labels, in_region_segments = _select_main_sheet(
+        anchors, in_region_labels, in_region_segments,
+    )
+
     # Bucket segments and labels by nearest anchor
     seg_buckets: dict[int, list[Segment]] = {i: [] for i in range(len(anchors))}
     for seg in in_region_segments:
@@ -225,6 +296,20 @@ def extract_rooms(
         label_buckets[nearest_anchor_index((raw.x_in, raw.y_in), anchors)].append(
             (raw, name, w, h)
         )
+
+    # Per-floor dedup: drop labels with the same name AND same nominal dims
+    # within a floor (architects rarely have two rooms identical on the same
+    # floor; collisions usually indicate a duplicate sheet that survived the
+    # Y-cluster filter).
+    for floor_idx, bucket in label_buckets.items():
+        seen: set[tuple[str, int, int]] = set()
+        dedup: list[tuple[RawLabel, str, int, int]] = []
+        for raw, name, w, h in bucket:
+            key = (name, w, h)
+            if key not in seen:
+                dedup.append((raw, name, w, h))
+                seen.add(key)
+        label_buckets[floor_idx] = dedup
 
     result = ExtractRoomsResult()
     room_counter = 0
