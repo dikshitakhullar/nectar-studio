@@ -95,8 +95,16 @@ def parse_file(
 
     region = find_plan_region(wall_centroids)
     wall_segments = _wall_segments(msp, wall_layers)
+    # Include window/GLASS layer LINEs as boundary segments. Windows live ONLY
+    # on exterior walls, so their positions are reliable exterior-wall markers
+    # — they help anchor rooms that face the outside of the building (most
+    # bedrooms, dining, drawing room) even when the WALL layer is incomplete
+    # at the glazed opening.
+    window_layers = set(layer_roles.get(LayerRole.window, []))
+    window_segments = _wall_segments(msp, window_layers)
+    boundary_segments = wall_segments + window_segments
     room_result = extract_rooms(
-        msp, region, wall_segments,
+        msp, region, boundary_segments,
         default_ceiling_height_m=default_ceiling_height_m,
         dxf_unit_to_m=INCH_TO_M,
     )
