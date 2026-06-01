@@ -135,3 +135,31 @@ def test_ceiling_feature_constructs_with_valid_polygon():
         depth_m=0.15,
     )
     assert cf.depth_m == pytest.approx(0.15)
+
+
+def test_window_wall_index_and_along_wall_default_to_none():
+    # v1 parser doesn't snap openings to walls; both fields are optional/unknown.
+    w = Window(id="w1", width_m=1.2, height_m=1.5, sill_height_m=0.9)
+    assert w.wall_index is None
+    assert w.along_wall is None
+
+
+def test_door_wall_index_and_along_wall_default_to_none():
+    d = Door(id="d1", width_m=0.9)
+    assert d.wall_index is None
+    assert d.along_wall is None
+    # height default still 2.1; swing still unknown
+    assert d.height_m == pytest.approx(2.1)
+    assert d.swing == DoorSwing.unknown
+
+
+def test_room_floor_level_defaults_to_zero():
+    poly = [Point(x=0, y=0), Point(x=4, y=0), Point(x=4, y=3), Point(x=0, y=3)]
+    r = Room(id="r1", name="x", polygon=poly, ceiling_height_m=2.7)
+    assert r.floor_level == 0
+
+
+def test_room_floor_level_can_be_set_for_multi_floor_dwgs():
+    poly = [Point(x=0, y=0), Point(x=4, y=0), Point(x=4, y=3), Point(x=0, y=3)]
+    r = Room(id="r1", name="x", polygon=poly, ceiling_height_m=2.7, floor_level=1)
+    assert r.floor_level == 1

@@ -36,9 +36,11 @@ class DoorSwing(StrEnum):
 
 
 class Window(BaseModel):
+    # wall_index/along_wall are None when the parser hasn't snapped the opening to
+    # a specific wall yet (v1 ships without wall-snapping — the designer can edit).
     id: str
-    wall_index: int                # index into Room.polygon edge list
-    along_wall: float = Field(ge=0.0, le=1.0)  # fraction along that wall
+    wall_index: int | None = None
+    along_wall: float | None = Field(default=None, ge=0.0, le=1.0)
     width_m: float = Field(gt=0)
     height_m: float = Field(gt=0)
     sill_height_m: float = Field(ge=0)
@@ -47,8 +49,8 @@ class Window(BaseModel):
 
 class Door(BaseModel):
     id: str
-    wall_index: int
-    along_wall: float = Field(ge=0.0, le=1.0)
+    wall_index: int | None = None
+    along_wall: float | None = Field(default=None, ge=0.0, le=1.0)
     width_m: float = Field(gt=0)
     height_m: float = Field(gt=0, default=2.1)
     swing: DoorSwing = DoorSwing.unknown
@@ -88,6 +90,7 @@ class Room(BaseModel):
     id: str
     name: str
     type: RoomType = RoomType.unknown
+    floor_level: int = 0           # 0 = ground/only floor; positive = upper floors
     polygon: list[Point]
     ceiling_height_m: float = Field(gt=0)
     windows: list[Window] = []
