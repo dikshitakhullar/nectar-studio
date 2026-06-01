@@ -3,8 +3,6 @@
 Units throughout this module are SI (meters) and degrees. Coordinates are in a
 plan-local frame whose origin is the bottom-left of the detected plan region.
 """
-from __future__ import annotations
-
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -52,6 +50,7 @@ class Door(BaseModel):
     wall_index: int
     along_wall: float = Field(ge=0.0, le=1.0)
     width_m: float = Field(gt=0)
+    height_m: float = Field(gt=0, default=2.1)
     swing: DoorSwing = DoorSwing.unknown
 
 
@@ -60,7 +59,7 @@ class Furniture(BaseModel):
     raw_label: str | None = None   # "FRIDGE", "sofa 053", block name, etc.
     type: str = "unknown"          # designer batch-tags this later
     position: Point
-    footprint: list[Point] = Field(default_factory=list)  # may be empty
+    footprint: list[Point] = []  # may be empty
 
 
 class Fixture(BaseModel):
@@ -77,6 +76,13 @@ class CeilingFeature(BaseModel):
     polygon: list[Point]
     depth_m: float = 0.0
 
+    @field_validator("polygon")
+    @classmethod
+    def _polygon_has_three_points(cls, v: list[Point]) -> list[Point]:
+        if len(v) < 3:
+            raise ValueError("polygon needs at least 3 points")
+        return v
+
 
 class Room(BaseModel):
     id: str
@@ -84,11 +90,11 @@ class Room(BaseModel):
     type: RoomType = RoomType.unknown
     polygon: list[Point]
     ceiling_height_m: float = Field(gt=0)
-    windows: list[Window] = Field(default_factory=list)
-    doors: list[Door] = Field(default_factory=list)
-    furniture: list[Furniture] = Field(default_factory=list)
-    ceiling_features: list[CeilingFeature] = Field(default_factory=list)
-    existing_fixtures: list[Fixture] = Field(default_factory=list)
+    windows: list[Window] = []
+    doors: list[Door] = []
+    furniture: list[Furniture] = []
+    ceiling_features: list[CeilingFeature] = []
+    existing_fixtures: list[Fixture] = []
 
     @field_validator("polygon")
     @classmethod
@@ -116,4 +122,4 @@ class Project(BaseModel):
     location: str = "delhi"
     floor_level: int = 0
     north_orientation_deg: float = 0.0
-    rooms: list[Room] = Field(default_factory=list)
+    rooms: list[Room] = []
