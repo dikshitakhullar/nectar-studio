@@ -137,6 +137,15 @@ def score_structural(project: Project, golden: GoldenSpec) -> TierScore:
                     continue
                 if not p1.intersects(p2):
                     continue
+                # Staircases sit *inside* other rooms architecturally
+                # (the lobby contains the staircase, the foyer wraps it, etc.).
+                # A staircase-vs-other-room overlap is semantically correct;
+                # only flag staircase-vs-staircase (which would mean two stairs
+                # at the same location — a real bug).
+                is_stair_1 = r1.type == RoomType.staircase
+                is_stair_2 = r2.type == RoomType.staircase
+                if is_stair_1 ^ is_stair_2:
+                    continue
                 inter = p1.intersection(p2)
                 if inter.area > _OVERLAP_MIN_SQM:
                     overlaps_found += 1

@@ -404,7 +404,91 @@ def extract_rooms(
                 polygon=polygon,
                 ceiling_height_m=default_ceiling_height_m,
             ))
+
+    # Staircases — separate detection because architects mark them with UP/DN
+    # arrows, not room labels with dimensions.
+    room_counter = _add_staircases(
+        msp, anchors, region, room_counter, result,
+        default_ceiling_height_m=default_ceiling_height_m,
+        dxf_unit_to_m=dxf_unit_to_m,
+    )
     return result
+
+
+# Default nominal staircase dimensions when we have no label dims: 4ft wide ×
+# 10ft long (a typical residential straight-run flight).
+_STAIRCASE_NOMINAL_W_IN = 48.0
+_STAIRCASE_NOMINAL_H_IN = 120.0
+
+
+def _add_staircases(
+    msp: Modelspace,
+    anchors: list[FloorAnchor],
+    region: PlanRegion,
+    room_counter: int,
+    result: ExtractRoomsResult,
+    *,
+    default_ceiling_height_m: float,
+    dxf_unit_to_m: float,
+) -> int:
+    """Detect UP/DN-marked staircases and append one Room per cluster.
+
+    The staircase polygon is a default-sized rectangle centred on the cluster
+    centroid (we don't have a labelled dimension to anchor against). Future
+    work (v1): snap to surrounding walls or trace the actual tread arcs.
+
+    Staircases on dropped sheets (multi-sheet DXFs) are filtered out by
+    requiring the staircase's nearest floor anchor among ALL detected anchors
+    to also be in the kept set.
+    """
+    from lighting_engine.parser.floors import detect_floor_anchors
+    from lighting_engine.parser.staircases import detect_staircase_anchors
+
+    stair_anchors = detect_staircase_anchors(msp)
+
+    # Filter to the kept sheet only. We detect floor anchors fresh and check
+    # whether each staircase's nearest anchor was kept after sheet dedup.
+    all_floor_anchors = detect_floor_anchors(msp)
+    if len(all_floor_anchors) > len(anchors):
+        kept_set = {(a.name, round(a.x, 2), round(a.y, 2)) for a in anchors}
+        def is_in_kept_sheet(s_x: float, s_y: float) -> bool:
+            if not all_floor_anchors:
+                return True
+            idx = nearest_anchor_index((s_x, s_y), all_floor_anchors)
+            a = all_floor_anchors[idx]
+            return (a.name, round(a.x, 2), round(a.y, 2)) in kept_set
+        stair_anchors = [s for s in stair_anchors if is_in_kept_sheet(s.x, s.y)]
+
+    for s in stair_anchors:
+        # Assign to floor via the same nearest-anchor logic as labelled rooms
+        floor_idx = nearest_anchor_index((s.x, s.y), anchors)
+        floor_level = floor_level_for_name(anchors[floor_idx].name)
+
+        # Build a default-size axis-aligned rectangle centred on the cluster
+        half_w = _STAIRCASE_NOMINAL_W_IN / 2
+        half_h = _STAIRCASE_NOMINAL_H_IN / 2
+        x_min = (s.x - half_w - region.min_x) * dxf_unit_to_m
+        x_max = (s.x + half_w - region.min_x) * dxf_unit_to_m
+        y_min = (s.y - half_h - region.min_y) * dxf_unit_to_m
+        y_max = (s.y + half_h - region.min_y) * dxf_unit_to_m
+        polygon = [
+            Point(x=x_min, y=y_min),
+            Point(x=x_max, y=y_min),
+            Point(x=x_max, y=y_max),
+            Point(x=x_min, y=y_max),
+        ]
+
+        room_id = _slugify("STAIRCASE", room_counter)
+        room_counter += 1
+        result.rooms.append(Room(
+            id=room_id,
+            name="STAIRCASE",
+            type=RoomType.staircase,
+            floor_level=floor_level,
+            polygon=polygon,
+            ceiling_height_m=default_ceiling_height_m,
+        ))
+    return room_counter
 
 
 def _floor_envelope_meters(
