@@ -93,6 +93,41 @@ def _to_local_m(
     return (x_in - region.min_x) * scale, (y_in - region.min_y) * scale
 
 
+def _snap_to_nearest_wall(
+    room: Room, point: tuple[float, float],
+) -> tuple[int, float]:
+    """Return (wall_index, along_wall_fraction) for the nearest polygon edge.
+
+    `wall_index` is the index of the polygon vertex where the edge starts.
+    `along_wall` is the 0–1 fraction along that edge of the foot of the
+    perpendicular from `point`. Used to position doors/windows on a specific
+    wall of a room.
+    """
+    px, py = point
+    poly = room.polygon
+    best_i = 0
+    best_d = math.inf
+    best_t = 0.5
+    for i in range(len(poly)):
+        a = poly[i]
+        b = poly[(i + 1) % len(poly)]
+        dx = b.x - a.x
+        dy = b.y - a.y
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            continue
+        t = ((px - a.x) * dx + (py - a.y) * dy) / length_sq
+        t = max(0.0, min(1.0, t))
+        foot_x = a.x + t * dx
+        foot_y = a.y + t * dy
+        d = (foot_x - px) ** 2 + (foot_y - py) ** 2
+        if d < best_d:
+            best_d = d
+            best_i = i
+            best_t = t
+    return best_i, best_t
+
+
 def _seg_min_endpoint_dist_sq(
     s1: tuple[tuple[float, float], tuple[float, float]],
     s2: tuple[tuple[float, float], tuple[float, float]],
@@ -193,8 +228,11 @@ def attach_entities(
             float(e.dxf.insert.x), float(e.dxf.insert.y), region, dxf_unit_to_m
         )
         idx = attach_room_index(rooms, room_polys, (px, py))
+        wall_idx, along = _snap_to_nearest_wall(rooms[idx], (px, py))
         door = Door(
             id=f"door-{summary.doors_attached:03d}",
+            wall_index=wall_idx,
+            along_wall=along,
             width_m=0.9,           # placeholder; refined in v2
             swing=DoorSwing.unknown,
         )
@@ -227,11 +265,13 @@ def attach_entities(
         glazed = (
             sum(win_glazed_flag[i] for i in cluster_indices) > len(cluster_indices) / 2
         )
-        rooms[idx].windows.append(
-            _window_from_cluster(
-                cluster, window_id=f"win-{ci:03d}", is_glazed_door=glazed
-            )
+        window = _window_from_cluster(
+            cluster, window_id=f"win-{ci:03d}", is_glazed_door=glazed,
         )
+        # Snap the window to a specific wall of its room
+        wall_idx, along = _snap_to_nearest_wall(rooms[idx], (mid_x, mid_y))
+        window = window.model_copy(update={"wall_index": wall_idx, "along_wall": along})
+        rooms[idx].windows.append(window)
         summary.windows_attached += 1
 
     # ----- FURNITURE (INSERTs on furniture layers) -----
