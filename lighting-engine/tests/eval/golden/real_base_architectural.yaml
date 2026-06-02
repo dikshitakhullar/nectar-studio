@@ -1,0 +1,49 @@
+# Golden set for real_base_architectural.dxf (Mohak Residence)
+# Edit by hand — this is the SOURCE OF TRUTH for what the parser should produce.
+# Last reviewed: 2026-06-02
+
+file: real_base_architectural.dxf
+expected_staircases_min: 1    # v0 must-have: staircase detection (UP/DN labels)
+require_no_overlaps: true
+
+expected_rooms:
+  # ---------- Floor 0 (ground) ----------
+  - { name: BAR,                       type: unknown,  floor_level: 0, optional: false }
+  - { name: COURTYARD,                 type: outdoor,  floor_level: 0, optional: false }
+  - { name: DINING,                    type: dining,   floor_level: 0, optional: false }
+  - { name: DOUBLE HEIGHT FOYER,       type: foyer,    floor_level: 0, optional: false }
+  - { name: DRAWING ROOM,              type: unknown,  floor_level: 0, optional: false }
+  - { name: DRESS,                     type: unknown,  floor_level: 0, optional: false }
+  - { name: ENTRANCE FOYER,            type: foyer,    floor_level: 0, optional: false }
+  - { name: FAMILY LOUNGE,             type: unknown,  floor_level: 0, optional: false }
+  - { name: GUEST BEDROOM,             type: bedroom,  floor_level: 0, optional: false }
+  - { name: KITCHEN,                   type: kitchen,  floor_level: 0, optional: false }
+  - { name: LIFT,                      type: unknown,  floor_level: 0, optional: false }
+  - { name: LOBBY,                     type: hallway,  floor_level: 0, optional: false }
+  - { name: 'P. TOILET',               type: bathroom, floor_level: 0, optional: false }
+  - { name: PUJA ROOM,                 type: unknown,  floor_level: 0, optional: false }
+  - { name: SHAFT,                     type: unknown,  floor_level: 0, optional: true  }
+  - { name: STORE ROOM,                type: unknown,  floor_level: 0, optional: false }
+  - { name: 'UTILITY & WASHING AREA',  type: unknown,  floor_level: 0, optional: false }
+  - { name: WASHING AREA,              type: unknown,  floor_level: 0, optional: false }
+  # ---------- Floor 1 (first) ----------
+  - { name: 'BEDROOM - 1',                       type: bedroom,  floor_level: 1, optional: false }
+  - { name: 'BEDROOM - 2',                       type: bedroom,  floor_level: 1, optional: false }
+  - { name: COURTYARD BELOW,                     type: outdoor,  floor_level: 1, optional: false }
+  - { name: DOUBLE HEIGHT DRAWING ROOM BELOW,    type: unknown,  floor_level: 1, optional: false }
+  - { name: DRESS,                               type: unknown,  floor_level: 1, optional: false }
+  - { name: 'DRESS - 1',                         type: unknown,  floor_level: 1, optional: false }
+  - { name: 'DRESS - 2',                         type: unknown,  floor_level: 1, optional: false }
+  - { name: LIFT,                                type: unknown,  floor_level: 1, optional: false }
+  - { name: LOBBY,                               type: hallway,  floor_level: 1, optional: false }
+  - { name: MASTER BEDROOM,                      type: bedroom,  floor_level: 1, optional: false }
+  - { name: MASTER DRESS,                        type: unknown,  floor_level: 1, optional: false }
+  - { name: MASTER TOILET,                       type: bathroom, floor_level: 1, optional: false }
+  - { name: PANTRY,                              type: kitchen,  floor_level: 1, optional: false }
+  - { name: SHAFT,                               type: unknown,  floor_level: 1, optional: true  }
+  - { name: STORAGE,                             type: unknown,  floor_level: 1, optional: false }
+  - { name: STUDY ROOM,                          type: study,    floor_level: 1, optional: false }
+  - { name: TERRACE,                             type: outdoor,  floor_level: 1, optional: false }
+  - { name: TOILET,                              type: bathroom, floor_level: 1, optional: false }
+  - { name: 'TOILET - 1',                        type: bathroom, floor_level: 1, optional: false }
+  - { name: 'TOILET - 2',                        type: bathroom, floor_level: 1, optional: false }
