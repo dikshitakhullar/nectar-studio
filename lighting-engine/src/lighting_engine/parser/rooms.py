@@ -464,13 +464,23 @@ def _add_staircases(
         floor_idx = nearest_anchor_index((s.x, s.y), anchors)
         floor_level = floor_level_for_name(anchors[floor_idx].name)
 
-        # Build a default-size axis-aligned rectangle centred on the cluster
-        half_w = _STAIRCASE_NOMINAL_W_IN / 2
-        half_h = _STAIRCASE_NOMINAL_H_IN / 2
-        x_min = (s.x - half_w - region.min_x) * dxf_unit_to_m
-        x_max = (s.x + half_w - region.min_x) * dxf_unit_to_m
-        y_min = (s.y - half_h - region.min_y) * dxf_unit_to_m
-        y_max = (s.y + half_h - region.min_y) * dxf_unit_to_m
+        if s.tread_bbox_in is not None:
+            # Use the real tread-cluster bbox (already in DXF units).
+            bx_min, by_min, bx_max, by_max = s.tread_bbox_in
+            x_min = (bx_min - region.min_x) * dxf_unit_to_m
+            x_max = (bx_max - region.min_x) * dxf_unit_to_m
+            y_min = (by_min - region.min_y) * dxf_unit_to_m
+            y_max = (by_max - region.min_y) * dxf_unit_to_m
+        else:
+            # Fall back to a default-size axis-aligned rectangle centred on the
+            # cluster centroid (label position).
+            half_w = _STAIRCASE_NOMINAL_W_IN / 2
+            half_h = _STAIRCASE_NOMINAL_H_IN / 2
+            x_min = (s.x - half_w - region.min_x) * dxf_unit_to_m
+            x_max = (s.x + half_w - region.min_x) * dxf_unit_to_m
+            y_min = (s.y - half_h - region.min_y) * dxf_unit_to_m
+            y_max = (s.y + half_h - region.min_y) * dxf_unit_to_m
+
         polygon = [
             Point(x=x_min, y=y_min),
             Point(x=x_max, y=y_min),

@@ -196,7 +196,8 @@ def _compute_adjacencies(rooms: list[Room]) -> list[Adjacency]:
             dy = p1[1] - p2[1]
             if dx * dx + dy * dy > threshold_sq:
                 continue
-            key = tuple(sorted([r1.id, r2.id]))
+            ids = sorted([r1.id, r2.id])
+            key = (ids[0], ids[1])
             if key in seen:
                 continue
             seen.add(key)
