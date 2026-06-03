@@ -113,16 +113,34 @@ async def create_project_endpoint(
         parsed_ir=parsed_ir,
     )
 
+    # Defensive dedupe: the parser's room-ID generator is name-based and
+    # collides when a multi-sheet / multi-floor plan has two rooms with the
+    # same label (e.g. "DOUBLE HEIGHT FOYER" on both ground and first floor
+    # of a duplex). Append a `--2`, `--3`, … suffix to subsequent duplicates
+    # within this upload so the DB primary key holds. The disambiguator is
+    # opaque to the user; the room *name* stays unchanged so the studio
+    # picker shows the architect's label as-is.
     summaries: list[RoomSummary] = []
+    seen_ids: set[str] = set()
     for room in project.rooms:
         tier = classify_tier(room.type)
         if tier is None:
-            # Hidden tier — not surfaced in the picker.
             continue
+        room_id = room.id
+        if room_id in seen_ids:
+            counter = 2
+            while f"{room.id}--{counter}" in seen_ids:
+                counter += 1
+            room_id = f"{room.id}--{counter}"
+        seen_ids.add(room_id)
         confirmed = confirmed_room_from_parsed(room, tier)
+        # Patch the confirmed blob's `id` so the GET /rooms/{rid} round-trip
+        # lines up with the URL the picker will route to.
+        if room_id != confirmed.id:
+            confirmed = confirmed.model_copy(update={"id": room_id})
         await create_room(
             session,
-            room_id=room.id,
+            room_id=room_id,
             project_id=project_id,
             name=room.name,
             confirmed=confirmed,
@@ -130,7 +148,7 @@ async def create_project_endpoint(
         )
         summaries.append(
             room_summary_from_record(
-                room_id=room.id,
+                room_id=room_id,
                 name=room.name,
                 tier=tier,
                 status="new",
