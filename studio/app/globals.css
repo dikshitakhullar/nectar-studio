@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* RCP / furniture SVG containers — let the engine's SVGs size to their parent.
+   The engine emits root <svg> with viewBox but no fixed width/height, so we
+   force them to fill the container and stay aspect-correct. */
+.rcp-container svg,
+.furniture-container svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
