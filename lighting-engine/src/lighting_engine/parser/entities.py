@@ -13,7 +13,9 @@ in the plan-local frame using the region origin.
 import math
 from dataclasses import dataclass
 
+from ezdxf.entities.arc import Arc
 from ezdxf.entities.insert import Insert
+from ezdxf.entities.lwpolyline import LWPolyline
 from ezdxf.layouts.layout import Modelspace
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry.polygon import Polygon as ShapelyPolygon
@@ -247,26 +249,74 @@ def attach_entities(
         rooms[idx].doors.append(door)
         summary.doors_attached += 1
 
-    # ----- WINDOWS (clustered LINE segments on window/glass layers) -----
-    # First collect every window-layer LINE in local-meter coords. We will
-    # then drop any segment that isn't sitting on an interior room's wall —
-    # those are parapet/terrace/courtyard boundary lines that happen to live
-    # on the window/GLASS layer but don't represent a real window.
+    # ----- WINDOWS (clustered segments on window/glass layers) -----
+    # Architects draw window glyphs as three different entity types: LINE
+    # pairs (straight glazing), LWPOLYLINE rectangles (closed frames), and
+    # ARC entities (casement-window swing symbols). _wall_segments and the
+    # visualizer already handle LINE + LWPOLYLINE; this pass must collect
+    # ALL THREE or rooms whose windows are drawn as polylines/arcs (DINING,
+    # KITCHEN, DRAWING ROOM in the Delhi fixture) end up with zero attached
+    # windows in the IR despite the SVG showing window glyphs. After
+    # collection, filter_valid_windows() drops anything not on an interior
+    # room's wall (parapets / terraces / etc.).
     raw_win_segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
     raw_win_glazed_flag: list[bool] = []
-    for e in msp.query("LINE"):
-        if e.dxf.layer not in window_layers:
-            continue
-        x1, y1 = float(e.dxf.start.x), float(e.dxf.start.y)
-        x2, y2 = float(e.dxf.end.x), float(e.dxf.end.y)
+
+    def _append_segment(
+        x1: float, y1: float, x2: float, y2: float, layer_name: str,
+    ) -> None:
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
         if not region.contains((mx, my)):
             summary.skipped_outside_region += 1
-            continue
+            return
         a = _to_local_m(x1, y1, region, dxf_unit_to_m)
         b = _to_local_m(x2, y2, region, dxf_unit_to_m)
         raw_win_segments.append((a, b))
-        raw_win_glazed_flag.append("glass" in e.dxf.layer.lower())
+        raw_win_glazed_flag.append("glass" in layer_name.lower())
+
+    for e in msp.query("LINE"):
+        if e.dxf.layer not in window_layers:
+            continue
+        _append_segment(
+            float(e.dxf.start.x), float(e.dxf.start.y),
+            float(e.dxf.end.x), float(e.dxf.end.y),
+            e.dxf.layer,
+        )
+
+    for e in msp.query("LWPOLYLINE"):
+        if not isinstance(e, LWPolyline):
+            continue
+        if e.dxf.layer not in window_layers:
+            continue
+        verts = [(float(v[0]), float(v[1])) for v in e.get_points()]
+        for i in range(len(verts) - 1):
+            _append_segment(
+                verts[i][0], verts[i][1],
+                verts[i + 1][0], verts[i + 1][1],
+                e.dxf.layer,
+            )
+        if e.closed and len(verts) >= 3:
+            _append_segment(
+                verts[-1][0], verts[-1][1],
+                verts[0][0], verts[0][1],
+                e.dxf.layer,
+            )
+
+    # ARC = casement-window swing symbol. The chord (start point → end point)
+    # approximates the glass plane the swing rests on, which is what we
+    # want for window placement.
+    for e in msp.query("ARC"):
+        if not isinstance(e, Arc):
+            continue
+        if e.dxf.layer not in window_layers:
+            continue
+        start_pt = e.start_point
+        end_pt = e.end_point
+        _append_segment(
+            float(start_pt.x), float(start_pt.y),
+            float(end_pt.x), float(end_pt.y),
+            e.dxf.layer,
+        )
 
     summary.window_segments_seen = len(raw_win_segments)
     kept_segments, dropped_segments = filter_valid_windows(
