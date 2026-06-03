@@ -48,12 +48,19 @@ _MAX_CAST_DIST_M = 6.0
 # Wall direction must be within this many degrees of perpendicular to the ray
 # (i.e. for an X-axis ray we want walls that are predominantly vertical).
 _PERPENDICULAR_TOL_DEG = 20.0
-# Tiny segments (door jamb fragments, drafting noise) shouldn't act as
-# bounding walls. 1m is roughly the smallest interior wall worth respecting.
-_MIN_WALL_SPAN_M = 1.0
-# Wall must span at least this fraction of the polygon's perpendicular extent
-# (else a small fragment could fire as a false "bound").
-_MIN_PERPENDICULAR_OVERLAP_FRAC = 0.5
+# Tiny segments (drafting noise) shouldn't act as bounding walls. 0.3m
+# admits door-jamb fragments and wall stubs broken by openings.
+_MIN_WALL_SPAN_M = 0.3
+# Wall fragments at the same axis position are aggregated (their Y-overlaps
+# with the polygon are unioned). The COLLECTIVE overlap must reach this
+# fraction of the polygon's perpendicular extent. 0.25 admits walls broken
+# by doors and windows — typical interior wall is ~30-50% wall, 50-70%
+# opening when room has a door + window.
+_MIN_PERPENDICULAR_OVERLAP_FRAC = 0.25
+# Tolerance for grouping wall fragments along the cast axis (X for vertical
+# walls, Y for horizontal). Wall thickness is ~0.2m so fragments may sit at
+# slightly different recorded centerlines.
+_AXIS_GROUP_TOL_M = 0.2
 # Don't translate at all unless the gap exceeds this — small gaps are the
 # snap module's job.
 _MIN_SIGNIFICANT_GAP_M = 0.6
@@ -98,6 +105,79 @@ def _polygon_bbox(polygon: list[Point]) -> tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _collective_overlap_at_x(
+    target_x: float,
+    walls: list[_WallLine],
+    polygon_miny: float, polygon_maxy: float,
+    axis_tol: float = _AXIS_GROUP_TOL_M,
+) -> float:
+    """Sum the union of Y-overlaps for all vertical walls within `axis_tol` of
+    `target_x` against [polygon_miny, polygon_maxy].
+
+    A wall broken by doors/windows shows up as multiple fragments at the same
+    X — this aggregates them so the collective wall is what gets measured.
+    """
+    intervals: list[tuple[float, float]] = []
+    for w in walls:
+        if not w.is_vertical:
+            continue
+        wx = (w.p1[0] + w.p2[0]) / 2.0
+        if abs(wx - target_x) > axis_tol:
+            continue
+        lo, hi = sorted((w.p1[1], w.p2[1]))
+        clipped_lo = max(lo, polygon_miny)
+        clipped_hi = min(hi, polygon_maxy)
+        if clipped_hi > clipped_lo:
+            intervals.append((clipped_lo, clipped_hi))
+    if not intervals:
+        return 0.0
+    intervals.sort()
+    total = 0.0
+    cur_lo, cur_hi = intervals[0]
+    for lo, hi in intervals[1:]:
+        if lo <= cur_hi:
+            cur_hi = max(cur_hi, hi)
+        else:
+            total += cur_hi - cur_lo
+            cur_lo, cur_hi = lo, hi
+    total += cur_hi - cur_lo
+    return total
+
+
+def _collective_overlap_at_y(
+    target_y: float,
+    walls: list[_WallLine],
+    polygon_minx: float, polygon_maxx: float,
+    axis_tol: float = _AXIS_GROUP_TOL_M,
+) -> float:
+    """Sum union of X-overlaps for all horizontal walls within `axis_tol` of `target_y`."""
+    intervals: list[tuple[float, float]] = []
+    for w in walls:
+        if not w.is_horizontal:
+            continue
+        wy = (w.p1[1] + w.p2[1]) / 2.0
+        if abs(wy - target_y) > axis_tol:
+            continue
+        lo, hi = sorted((w.p1[0], w.p2[0]))
+        clipped_lo = max(lo, polygon_minx)
+        clipped_hi = min(hi, polygon_maxx)
+        if clipped_hi > clipped_lo:
+            intervals.append((clipped_lo, clipped_hi))
+    if not intervals:
+        return 0.0
+    intervals.sort()
+    total = 0.0
+    cur_lo, cur_hi = intervals[0]
+    for lo, hi in intervals[1:]:
+        if lo <= cur_hi:
+            cur_hi = max(cur_hi, hi)
+        else:
+            total += cur_hi - cur_lo
+            cur_lo, cur_hi = lo, hi
+    total += cur_hi - cur_lo
+    return total
+
+
 def _cast_x(
     polygon_minx: float, polygon_maxx: float,
     polygon_miny: float, polygon_maxy: float,
@@ -108,9 +188,9 @@ def _cast_x(
 ) -> float | None:
     """Cast a horizontal ray; return x-coord of closest qualifying vertical wall.
 
-    direction = +1: look right (wall_x > polygon_maxx).
-    direction = -1: look left (wall_x < polygon_minx).
-    Wall must span ≥ MIN_PERPENDICULAR_OVERLAP_FRAC of the polygon's Y extent.
+    Aggregates fragments at the same X position via `_collective_overlap_at_x`
+    so a wall broken by doors / windows still qualifies as a bound when its
+    fragments collectively cover the polygon's perpendicular extent.
     """
     polygon_h = polygon_maxy - polygon_miny
     best_x: float | None = None
@@ -129,11 +209,9 @@ def _cast_x(
             gap = polygon_minx - wall_x
         if gap > max_cast_dist_m:
             continue
-        wall_y_lo = min(w.p1[1], w.p2[1])
-        wall_y_hi = max(w.p1[1], w.p2[1])
-        overlap_lo = max(wall_y_lo, polygon_miny)
-        overlap_hi = min(wall_y_hi, polygon_maxy)
-        overlap = max(0.0, overlap_hi - overlap_lo)
+        overlap = _collective_overlap_at_x(
+            wall_x, walls, polygon_miny, polygon_maxy,
+        )
         if polygon_h > 0 and overlap < _MIN_PERPENDICULAR_OVERLAP_FRAC * polygon_h:
             continue
         if gap < best_gap:
@@ -150,7 +228,10 @@ def _cast_y(
     *,
     max_cast_dist_m: float,
 ) -> float | None:
-    """Cast a vertical ray; return y-coord of closest qualifying horizontal wall."""
+    """Cast a vertical ray; return y-coord of closest qualifying horizontal wall.
+
+    Same aggregation as `_cast_x` along the Y axis.
+    """
     polygon_w = polygon_maxx - polygon_minx
     best_y: float | None = None
     best_gap = max_cast_dist_m
@@ -168,11 +249,9 @@ def _cast_y(
             gap = polygon_miny - wall_y
         if gap > max_cast_dist_m:
             continue
-        wall_x_lo = min(w.p1[0], w.p2[0])
-        wall_x_hi = max(w.p1[0], w.p2[0])
-        overlap_lo = max(wall_x_lo, polygon_minx)
-        overlap_hi = min(wall_x_hi, polygon_maxx)
-        overlap = max(0.0, overlap_hi - overlap_lo)
+        overlap = _collective_overlap_at_y(
+            wall_y, walls, polygon_minx, polygon_maxx,
+        )
         if polygon_w > 0 and overlap < _MIN_PERPENDICULAR_OVERLAP_FRAC * polygon_w:
             continue
         if gap < best_gap:
@@ -184,11 +263,18 @@ def _cast_y(
 def _resolve_axis_translation(
     polygon_lo: float, polygon_hi: float,
     wall_lo: float | None, wall_hi: float | None,
+    *,
+    significant_gap_m: float = _MIN_SIGNIFICANT_GAP_M,
 ) -> float:
     """Compute one-axis translation from wall-cast results.
 
     Both walls + matching polygon width → center the polygon between them.
-    Both walls + polygon smaller → snap to the closer wall.
+    Both walls + polygon smaller:
+        - If one side's gap is below `significant_gap_m`, the polygon is
+          already effectively at that wall. Close the OTHER side's larger
+          phantom gap.
+        - Otherwise both sides have a real gap; pick the smaller-move option
+          (closer wall) so we don't make any single side dramatically worse.
     One wall → translate polygon's nearest edge to touch it.
     Neither → 0.
     """
@@ -203,6 +289,13 @@ def _resolve_axis_translation(
             return target_center - polygon_center
         gap_lo = polygon_lo - wall_lo
         gap_hi = wall_hi - polygon_hi
+        # Asymmetric phantom-gap rule: if one side is already essentially at
+        # its wall, the other side carries the real misalignment.
+        if gap_lo < significant_gap_m <= gap_hi:
+            return gap_hi
+        if gap_hi < significant_gap_m <= gap_lo:
+            return -gap_lo
+        # Both sides have meaningful gap — pick the smaller move.
         if gap_lo < gap_hi:
             return -gap_lo
         return gap_hi
@@ -254,8 +347,14 @@ def cast_bounding_walls(
         minx, maxx, miny, maxy, direction=+1, walls=walls,
         max_cast_dist_m=max_cast_dist_m,
     )
-    dx = _resolve_axis_translation(minx, maxx, wall_left, wall_right)
-    dy = _resolve_axis_translation(miny, maxy, wall_down, wall_up)
+    dx = _resolve_axis_translation(
+        minx, maxx, wall_left, wall_right,
+        significant_gap_m=min_significant_gap_m,
+    )
+    dy = _resolve_axis_translation(
+        miny, maxy, wall_down, wall_up,
+        significant_gap_m=min_significant_gap_m,
+    )
     # Zero out small components — those are the snap step's job.
     if abs(dx) < min_significant_gap_m:
         dx = 0.0

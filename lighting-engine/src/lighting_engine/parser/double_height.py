@@ -111,6 +111,29 @@ def find_double_height_polygons(
     return out
 
 
+def collect_non_continuous_segments(
+    dxf_doc: Drawing,
+    *,
+    min_seg_len_in: float = _MIN_SEG_LEN_IN,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Return all LINE / LWPOLYLINE segments whose effective linetype is non-
+    continuous (HIDDEN, DASHED, DASHDOT, PHANTOM, CENTER, etc.), in DXF source
+    units.
+
+    These segments mark architectural features outside the cutting plane —
+    void boundaries above/below, double-height edges, hidden walls. They are
+    also valid bounding-wall candidates for wall-cast / wall-snap: when a
+    floor's structural wall is drawn dashed because it bounds a double-height
+    void in the room above, this is the only place that wall geometry shows
+    up. Pass through the same length filter the double-height detector uses
+    so micro-noise stippling is dropped.
+    """
+    msp = dxf_doc.modelspace()
+    layer_lt = _layer_linetype_map(dxf_doc)
+    segments = _collect_non_continuous_segments(msp, layer_lt)
+    return _filter_by_length(segments, min_seg_len_in)
+
+
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------

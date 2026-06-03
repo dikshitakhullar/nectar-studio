@@ -108,9 +108,9 @@ def test_wall_inside_polygon_is_ignored():
 
 
 def test_wall_perpendicular_overlap_too_short_rejected():
-    # Polygon spans y=[0,4]. Wall spans y=[0, 1.5] only — overlap = 1.5 < 50% of 4 = 2
+    # Polygon spans y=[0,4]. Wall spans y=[0, 0.8] only — overlap 0.8m < 25% of 4 = 1.0m
     room = _room("R", _rect(5.0, 0.0, 9.0, 4.0))
-    walls = [_vertical_wall(2.0, 0.0, 1.5)]
+    walls = [_vertical_wall(2.0, 0.0, 0.8)]
     out = cast_bounding_walls(room, walls)
     assert out.polygon == room.polygon
 

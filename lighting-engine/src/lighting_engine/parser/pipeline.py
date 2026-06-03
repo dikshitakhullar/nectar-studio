@@ -16,7 +16,10 @@ from lighting_engine.models.gaps import (
     Severity,
 )
 from lighting_engine.models.geometry import Point, Project, Room
-from lighting_engine.parser.double_height import find_double_height_polygons
+from lighting_engine.parser.double_height import (
+    collect_non_continuous_segments,
+    find_double_height_polygons,
+)
 from lighting_engine.parser.entities import attach_entities
 from lighting_engine.parser.gaps import build_gaps_report
 from lighting_engine.parser.geometry import PlanRegion, find_plan_region
@@ -194,8 +197,16 @@ def parse_file(
     # BEFORE the snap step so snap does its fine refinement on a polygon
     # already in the right region.
     if (enable_wall_cast or enable_wall_snap) and rooms:
+        # Include non-continuous-linetype segments (HIDDEN/DASHED/etc.) as
+        # additional bounding-wall candidates: where the architect draws a
+        # wall dashed because it bounds a double-height void in the floor
+        # above, this is the only place that wall geometry exists. Without
+        # these, rooms adjacent to double-height areas (e.g. drawing room
+        # bordering bar+dining whose ceiling opens to drawing room above)
+        # have no wall to cast against on that side.
+        non_continuous_segments = collect_non_continuous_segments(doc)
         local_meter_walls = _segments_to_local_meters(
-            boundary_segments, region, INCH_TO_M,
+            boundary_segments + non_continuous_segments, region, INCH_TO_M,
         )
         if enable_wall_cast:
             rooms, _translated = cast_bounding_walls_for_rooms(
