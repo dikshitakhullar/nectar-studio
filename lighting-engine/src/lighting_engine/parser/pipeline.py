@@ -16,6 +16,8 @@ from lighting_engine.models.gaps import (
     Severity,
 )
 from lighting_engine.models.geometry import Point, Project, Room
+from lighting_engine.parser.door_anchor import anchor_polygons_to_doors
+from lighting_engine.parser.door_detection import collect_door_positions
 from lighting_engine.parser.double_height import (
     collect_non_continuous_segments,
     find_double_height_polygons,
@@ -223,6 +225,31 @@ def parse_file(
     summary = attach_entities(
         msp, rooms, layer_roles, region=region, dxf_unit_to_m=INCH_TO_M,
     )
+
+    # Door-anchored polygon adjustment (#40, minimal). When the architect's
+    # detected door position sits >0.4m outside the room's polygon, the
+    # polygon's location is wrong — wall-cast / wall-snap didn't catch it
+    # (typically because there's no qualifying perpendicular wall on one
+    # axis, or the polygon's edges aren't close enough to snap). Doors are
+    # a strong positional anchor, so shift the polygon to bring it onto
+    # them. Translation-only, overlap-guarded. We re-run `attach_entities`
+    # once after the move so door/window wall_index + along_wall stay
+    # consistent with the new polygon edges.
+    door_layers = set(layer_roles.get(LayerRole.door, []))
+    raw_doors = collect_door_positions(msp, door_layers, region, INCH_TO_M)
+    rooms, anchored = anchor_polygons_to_doors(rooms, raw_doors)
+    if anchored > 0:
+        # Reset attached entities and re-run so doors/windows/furniture/
+        # fixtures get re-routed against the moved polygons. The IR is
+        # additive in `attach_entities`, so we must clear lists first.
+        for r in rooms:
+            r.doors.clear()
+            r.windows.clear()
+            r.furniture.clear()
+            r.existing_fixtures.clear()
+        summary = attach_entities(
+            msp, rooms, layer_roles, region=region, dxf_unit_to_m=INCH_TO_M,
+        )
 
     # Detect double-height (open-to-below) voids from dotted/dashed linework
     # and attach each polygon to whichever room's polygon contains its
