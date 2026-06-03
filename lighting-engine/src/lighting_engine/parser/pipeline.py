@@ -16,10 +16,11 @@ from lighting_engine.models.gaps import (
 from lighting_engine.models.geometry import Project
 from lighting_engine.parser.entities import attach_entities
 from lighting_engine.parser.gaps import build_gaps_report
-from lighting_engine.parser.geometry import find_plan_region
+from lighting_engine.parser.geometry import PlanRegion, find_plan_region
 from lighting_engine.parser.layers import LayerRole, classify_layers
 from lighting_engine.parser.loader import load_drawing
 from lighting_engine.parser.rooms import extract_rooms
+from lighting_engine.parser.snap import Segment, snap_rooms_to_walls
 
 INCH_TO_M = 0.0254
 
@@ -74,6 +75,23 @@ def _has_north_arrow(msp: Modelspace, north_layers: set[str]) -> bool:
     )
 
 
+def _segments_to_local_meters(
+    segments: list[Segment],
+    region: PlanRegion,
+    dxf_unit_to_m: float,
+) -> list[Segment]:
+    """Translate wall segments from DXF units into the local-meter frame the
+    Room polygons live in.
+    """
+    out: list[Segment] = []
+    for (x1, y1), (x2, y2) in segments:
+        out.append((
+            ((x1 - region.min_x) * dxf_unit_to_m, (y1 - region.min_y) * dxf_unit_to_m),
+            ((x2 - region.min_x) * dxf_unit_to_m, (y2 - region.min_y) * dxf_unit_to_m),
+        ))
+    return out
+
+
 def parse_file(
     path: Path | str,
     *,
@@ -81,6 +99,7 @@ def parse_file(
     location: str = "delhi",
     floor_level: int = 0,
     default_ceiling_height_m: float = 2.7,
+    enable_wall_snap: bool = True,
 ) -> tuple[Project, GapsReport]:
     """Parse a single DWG/DXF into a Project + GapsReport.
 
@@ -127,6 +146,18 @@ def parse_file(
         dxf_unit_to_m=INCH_TO_M,
     )
     rooms = room_result.rooms
+
+    # Wall-snap pass: re-project each room polygon's edges onto nearby real
+    # wall lines so adjacent rooms that share a wall end up with coincident
+    # edges (eliminating phantom gaps). Runs AFTER label-based placement so it
+    # only refines positions, and BEFORE entity attachment / digest computation
+    # so downstream consumers see the corrected polygons.
+    if enable_wall_snap and rooms:
+        local_meter_walls = _segments_to_local_meters(
+            boundary_segments, region, INCH_TO_M,
+        )
+        rooms, _snapped, _rejected = snap_rooms_to_walls(rooms, local_meter_walls)
+
     summary = attach_entities(
         msp, rooms, layer_roles, region=region, dxf_unit_to_m=INCH_TO_M,
     )
