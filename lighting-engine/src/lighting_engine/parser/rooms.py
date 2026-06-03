@@ -440,6 +440,12 @@ def _add_staircases(
     Staircases on dropped sheets (multi-sheet DXFs) are filtered out by
     requiring the staircase's nearest floor anchor among ALL detected anchors
     to also be in the kept set.
+
+    Phantom exterior staircases — lone UP/DN markers that sit OUTSIDE the
+    building envelope and have no tread geometry — are also dropped. These
+    are typically exterior-step indicators the architect places on the plan
+    near an entrance or side door; treating them as interior staircases
+    invents a phantom room next to the wall.
     """
     from lighting_engine.parser.floors import detect_floor_anchors
     from lighting_engine.parser.staircases import detect_staircase_anchors
@@ -458,6 +464,17 @@ def _add_staircases(
             a = all_floor_anchors[idx]
             return (a.name, round(a.x, 2), round(a.y, 2)) in kept_set
         stair_anchors = [s for s in stair_anchors if is_in_kept_sheet(s.x, s.y)]
+
+    # Drop phantom exterior staircases: a stair anchor with no tread bbox AND
+    # whose anchor position sits outside the wall-envelope plan region is
+    # almost certainly a lonely UP/DN text the architect placed at an outdoor
+    # entrance step — not an interior staircase. Anchors backed by STEPS-layer
+    # tread geometry (tread_bbox_in is set) are trusted unconditionally because
+    # that geometry is the strongest possible evidence of a real flight.
+    stair_anchors = [
+        s for s in stair_anchors
+        if s.tread_bbox_in is not None or region.contains((s.x, s.y))
+    ]
 
     for s in stair_anchors:
         # Assign to floor via the same nearest-anchor logic as labelled rooms

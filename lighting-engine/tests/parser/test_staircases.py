@@ -262,3 +262,39 @@ def test_real_delhi_main_stair_area_from_tread_bbox() -> None:
         f"Expected at least one staircase with area > 10 sqm (got areas: {areas}). "
         "This suggests the tread bbox is not being used to size the staircase."
     )
+
+
+def test_real_delhi_no_phantom_exterior_staircases() -> None:
+    """End-to-end regression: lone UP/DN markers placed OUTSIDE the wall
+    envelope (typically annotating an exterior step at an entrance) must not
+    materialise into interior STAIRCASE rooms.
+
+    The real Delhi fixture has two such phantom UP arrows at x ≈ 211504 — well
+    west of the building's wall envelope (region.min_x ≈ 211580) — without any
+    STEPS-layer tread geometry nearby. Before the fix these surfaced as
+    floor-0 and floor-1 STAIRCASE rooms with their polygons partially outside
+    the building. After the fix only the tread-backed interior staircases
+    remain.
+    """
+    project, _ = parse_file(
+        FIXTURES / "real_base_architectural.dxf",
+        project_name="test",
+    )
+    stair_rooms = [r for r in project.rooms if r.type == RoomType.staircase]
+    # The phantom polygons live at negative-x in local-meter coords; their
+    # min(x) sits below 0 (outside the west wall). All legitimate staircases
+    # have polygons entirely at x ≥ 0.
+    for room in stair_rooms:
+        min_x = min(p.x for p in room.polygon)
+        assert min_x >= 0.0, (
+            f"Staircase {room.id!r} on floor {room.floor_level} extends "
+            f"west of the building envelope (min x={min_x:.2f} m) — looks "
+            f"like a phantom from an exterior UP/DN marker"
+        )
+
+    # And by count: exactly two real staircases (one per floor) survive.
+    assert len(stair_rooms) == 2, (
+        f"Expected exactly 2 tread-backed staircases (one per floor), got "
+        f"{len(stair_rooms)}: "
+        f"{[(r.floor_level, [(p.x, p.y) for p in r.polygon]) for r in stair_rooms]}"
+    )
