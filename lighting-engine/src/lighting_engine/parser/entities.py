@@ -27,12 +27,31 @@ from lighting_engine.models.geometry import (
     Furniture,
     Point,
     Room,
+    RoomType,
     Window,
 )
 from lighting_engine.parser.door_detection import collect_door_positions
 from lighting_engine.parser.geometry import PlanRegion
 from lighting_engine.parser.layers import LayerRole
+from lighting_engine.parser.snap import (
+    _overlap_fraction,  # pyright: ignore[reportPrivateUsage]
+    _perp_distance_point_to_line,  # pyright: ignore[reportPrivateUsage]
+    _WallLine,  # pyright: ignore[reportPrivateUsage]
+)
 from lighting_engine.parser.window_filter import filter_valid_windows
+
+# --- Window edge-routing thresholds ---------------------------------------
+# Match the values used by `filter_valid_windows` so a cluster that passes
+# the filter is always assignable to at least one room edge.
+_WINDOW_EDGE_MAX_PERP_DIST_M = 0.4
+_WINDOW_EDGE_MAX_PARALLEL_DEG = 15.0
+_WINDOW_EDGE_MIN_OVERLAP_FRAC = 0.5
+
+# Room names treated as outdoors regardless of RoomType. Mirrors the hints
+# used by `parser/window_filter._is_interior_room`. Kept in sync manually —
+# this routing pass needs the same interior/exterior split as the upstream
+# filter so we don't route a window onto a TERRACE or BALCONY polygon edge.
+_OUTDOOR_NAME_HINTS: tuple[str, ...] = ("terrace", "balcony")
 
 # Distance threshold (meters) for grouping window line-segment endpoints into a
 # single window cluster. Tuned to typical mullion/frame spacing.
@@ -220,6 +239,170 @@ def cluster_window_lines(
     return list(groups.values())
 
 
+def _is_interior_room_for_windows(room: Room) -> bool:
+    """Mirror of `parser/window_filter._is_interior_room` for cluster routing.
+
+    A window cluster only makes sense on an interior room's wall — we exclude
+    `RoomType.outdoor`, `RoomType.staircase`, and rooms whose name hints at a
+    terrace or balcony. Kept here (rather than imported) because the upstream
+    helper is module-private and pyright-strict makes the cross-module reuse
+    noisy enough to inline.
+    """
+    if room.type in (RoomType.outdoor, RoomType.staircase):
+        return False
+    lower = room.name.lower()
+    return not any(hint in lower for hint in _OUTDOOR_NAME_HINTS)
+
+
+def _cluster_principal_segment(
+    cluster: list[tuple[tuple[float, float], tuple[float, float]]],
+) -> tuple[Point, Point]:
+    """Approximate the cluster by a single segment along its principal axis.
+
+    For routing we treat the cluster as one conceptual window. We compute the
+    centroid, decide the cluster's long axis (horizontal vs vertical based on
+    bounding-box extents), and emit a segment along that axis that spans the
+    cluster's bbox extent in the chosen direction. This is what we feed to
+    `_find_best_wall` so the parallel / overlap / perpendicular checks the
+    snap module already implements work uniformly.
+    """
+    xs = [p[0] for seg in cluster for p in seg]
+    ys = [p[1] for seg in cluster for p in seg]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    cx = (minx + maxx) / 2.0
+    cy = (miny + maxy) / 2.0
+    width = maxx - minx
+    height = maxy - miny
+    if width >= height:
+        return Point(x=minx, y=cy), Point(x=maxx, y=cy)
+    return Point(x=cx, y=miny), Point(x=cx, y=maxy)
+
+
+def _room_edge_walls(room: Room) -> list[_WallLine]:
+    """Build a `_WallLine` for each polygon edge of `room`."""
+    out: list[_WallLine] = []
+    polygon = room.polygon
+    n = len(polygon)
+    for i in range(n):
+        a = polygon[i]
+        b = polygon[(i + 1) % n]
+        length = math.hypot(b.x - a.x, b.y - a.y)
+        if length <= 0.0:
+            continue
+        out.append(_WallLine(
+            p1=(a.x, a.y),
+            p2=(b.x, b.y),
+            dx=(b.x - a.x) / length,
+            dy=(b.y - a.y) / length,
+            length=length,
+        ))
+    return out
+
+
+def _route_cluster_by_edge(
+    cluster: list[tuple[tuple[float, float], tuple[float, float]]],
+    rooms: list[Room],
+    room_edge_walls: list[list[_WallLine]],
+) -> tuple[int, int, tuple[float, float]] | None:
+    """Pick the (room, wall_index) whose polygon edge best matches `cluster`.
+
+    Returns `(room_index, wall_index, snap_point)` where `snap_point` is the
+    midpoint of the cluster's principal segment in local meters. Returns None
+    when no interior room has a qualifying edge — caller falls back to the
+    point-in-polygon route.
+
+    Selection score (higher = better) is a tuple `(coverage_tier, -perp)`:
+      • `coverage_tier` = 1 when the room's edge fully covers the cluster
+        (overlap fraction ≥ 0.999), else 0. A window cannot extend past its
+        host wall, so a fully-covering edge is architecturally correct and
+        beats a partially-covering edge of a neighbouring room. This fixes
+        the case where a wide bedroom window has both the bedroom's long
+        south wall (full cover) and the adjacent toilet's shorter north
+        wall (partial cover) within the perp tolerance — we pick the
+        bedroom.
+      • `-perp` (negative perp distance) breaks ties within a tier — closer
+        edge wins.
+
+    All candidate edges must pass the same parallel / overlap / perp
+    thresholds as `filter_valid_windows`, so a cluster that survived the
+    filter is guaranteed at least one passing candidate here.
+    """
+    a, b = _cluster_principal_segment(cluster)
+    snap_point = ((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+    cluster_len = math.hypot(b.x - a.x, b.y - a.y)
+    if cluster_len <= 0.0:
+        return None
+    edge_dx_unit = (b.x - a.x) / cluster_len
+    edge_dy_unit = (b.y - a.y) / cluster_len
+
+    best_room_idx: int | None = None
+    best_wall_idx: int | None = None
+    # Score tuple: (full_coverage_flag, -perp_distance). Higher is better.
+    best_score: tuple[int, float] = (-1, -math.inf)
+
+    for ri, room in enumerate(rooms):
+        if not _is_interior_room_for_windows(room):
+            continue
+        walls = room_edge_walls[ri]
+        if not walls:
+            continue
+        # Find ALL qualifying edges (passing parallel + overlap + perp). We
+        # need to consider every edge so a long bedroom wall can outrank a
+        # shorter neighbour wall even when the neighbour is geometrically
+        # closer.
+        for wi, wall in enumerate(walls):
+            # Same checks as `_find_best_wall`, applied per-edge so we can
+            # score every qualifying edge rather than only the closest.
+            cos = abs(edge_dx_unit * wall.dx + edge_dy_unit * wall.dy)
+            cos = max(-1.0, min(1.0, cos))
+            angle_deg = math.degrees(math.acos(cos))
+            if angle_deg > _WINDOW_EDGE_MAX_PARALLEL_DEG:
+                continue
+            mx, my = snap_point
+            perp = _perp_distance_point_to_line(mx, my, wall)
+            if perp > _WINDOW_EDGE_MAX_PERP_DIST_M:
+                continue
+            overlap = _overlap_fraction(a.x, a.y, b.x, b.y, wall)
+            if overlap < _WINDOW_EDGE_MIN_OVERLAP_FRAC:
+                continue
+            full_cover = 1 if overlap >= 0.999 else 0
+            score = (full_cover, -perp)
+            if score > best_score:
+                best_score = score
+                best_room_idx = ri
+                # Map back from wall_lines list index to polygon vertex
+                # index. _room_edge_walls preserves polygon vertex order
+                # except it skips zero-length edges, so we re-walk the
+                # polygon and count emitted edges to find the right index.
+                best_wall_idx = _polygon_wall_index_for_emitted(
+                    room.polygon, wi,
+                )
+    if best_room_idx is None or best_wall_idx is None:
+        return None
+    return best_room_idx, best_wall_idx, snap_point
+
+
+def _polygon_wall_index_for_emitted(
+    polygon: list[Point], emitted_index: int,
+) -> int:
+    """Map an emitted-edge index (from `_room_edge_walls`) back to a polygon
+    vertex index. Zero-length edges are skipped during emission, so we walk
+    the polygon and count non-degenerate edges until we hit `emitted_index`.
+    """
+    count = 0
+    n = len(polygon)
+    for i in range(n):
+        a = polygon[i]
+        b = polygon[(i + 1) % n]
+        if math.hypot(b.x - a.x, b.y - a.y) <= 0.0:
+            continue
+        if count == emitted_index:
+            return i
+        count += 1
+    return 0
+
+
 def _window_from_cluster(
     cluster: list[tuple[tuple[float, float], tuple[float, float]]],
     *,
@@ -389,10 +572,22 @@ def attach_entities(
             kept_idx += 1
 
     clusters = cluster_window_lines(win_segments, max_gap_m=_WINDOW_CLUSTER_GAP_M)
+    # Pre-compute each room's polygon edges once for edge-best-match routing.
+    # Architects draw window glyphs straddling the wall, so the cluster's
+    # midpoint sits on the OUTSIDE face of the wall — point-in-polygon
+    # routes the window to whichever neighbour's polygon happens to contain
+    # that exterior point (often a courtyard, the room on the wrong side of
+    # the wall, or a passage). Edge-best-match instead picks the interior
+    # room whose polygon edge is closest to (and parallel to / overlapping)
+    # the cluster, which is the room the architect actually drew the
+    # window for. Same parallel / overlap / perp thresholds as
+    # `filter_valid_windows`.
+    room_edge_walls: list[list[_WallLine]] = [
+        _room_edge_walls(r) for r in rooms
+    ]
     for ci, cluster in enumerate(clusters):
         mid_x = sum(((s[0][0] + s[1][0]) / 2) for s in cluster) / len(cluster)
         mid_y = sum(((s[0][1] + s[1][1]) / 2) for s in cluster) / len(cluster)
-        idx = attach_room_index(rooms, room_polys, (mid_x, mid_y))
         cluster_indices = [i for i, seg in enumerate(win_segments) if seg in cluster]
         glazed = (
             sum(win_glazed_flag[i] for i in cluster_indices) > len(cluster_indices) / 2
@@ -400,8 +595,17 @@ def attach_entities(
         window = _window_from_cluster(
             cluster, window_id=f"win-{ci:03d}", is_glazed_door=glazed,
         )
-        # Snap the window to a specific wall of its room
-        wall_idx, along = _snap_to_nearest_wall(rooms[idx], (mid_x, mid_y))
+        routing = _route_cluster_by_edge(cluster, rooms, room_edge_walls)
+        if routing is not None:
+            idx, wall_idx, snap_point = routing
+            _, along = _snap_to_nearest_wall(rooms[idx], snap_point)
+        else:
+            # Fallback: midpoint-based attach when no interior room's polygon
+            # edge qualifies (e.g. the cluster sits in a region between rooms
+            # where no polygon was extracted). Preserves prior behaviour for
+            # clusters the new router can't place.
+            idx = attach_room_index(rooms, room_polys, (mid_x, mid_y))
+            wall_idx, along = _snap_to_nearest_wall(rooms[idx], (mid_x, mid_y))
         window = window.model_copy(update={"wall_index": wall_idx, "along_wall": along})
         rooms[idx].windows.append(window)
         summary.windows_attached += 1

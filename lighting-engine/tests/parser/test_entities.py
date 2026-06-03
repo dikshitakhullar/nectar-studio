@@ -4,6 +4,8 @@ from shapely.geometry.polygon import Polygon as ShapelyPolygon
 
 from lighting_engine.models.geometry import Point, Room, RoomType
 from lighting_engine.parser.entities import (
+    _room_edge_walls,  # pyright: ignore[reportPrivateUsage]
+    _route_cluster_by_edge,  # pyright: ignore[reportPrivateUsage]
     attach_entities,
     attach_room_index,
     cluster_window_lines,
@@ -69,6 +71,113 @@ def test_cluster_window_lines_groups_nearby_segments():
     ]
     clusters = cluster_window_lines(segments, max_gap_m=0.5)
     assert len(clusters) == 2
+
+
+def test_route_cluster_by_edge_picks_full_cover_room_over_partial_cover_neighbour():
+    """Two adjacent rooms share a wall — the bedroom's long south edge fully
+    contains the window, the toilet's shorter north edge only partially does.
+    Edge-best-match must pick the bedroom even when the toilet's edge is
+    geometrically closer (smaller perp distance) — full coverage beats partial.
+    Mirrors the MASTER BEDROOM south window misrouting in the Delhi fixture.
+    """
+    bedroom = Room(
+        id="bedroom",
+        name="MASTER BEDROOM",
+        type=RoomType.bedroom,
+        polygon=[
+            Point(x=0.0, y=10.0),   # SW corner
+            Point(x=10.0, y=10.0),  # SE corner
+            Point(x=10.0, y=20.0),
+            Point(x=0.0, y=20.0),
+        ],
+        ceiling_height_m=2.7,
+    )
+    # Toilet sits south of the bedroom, with a wall thickness gap.
+    # Toilet's north edge runs from x=2 to x=6 (shorter than the cluster width).
+    toilet = Room(
+        id="toilet",
+        name="MASTER TOILET",
+        type=RoomType.bathroom,
+        polygon=[
+            Point(x=2.0, y=5.0),
+            Point(x=6.0, y=5.0),
+            Point(x=6.0, y=9.7),   # toilet north edge at y=9.7
+            Point(x=2.0, y=9.7),
+        ],
+        ceiling_height_m=2.7,
+    )
+    rooms = [bedroom, toilet]
+    edges = [_room_edge_walls(r) for r in rooms]
+
+    # Cluster: a 5m-wide window drawn between the two rooms at y=9.85
+    # (within 0.15m of bedroom's south edge at y=10, and within 0.15m of
+    # toilet's north edge at y=9.7). Cluster x-extent [1, 6] exceeds the
+    # toilet's edge [2, 6] but fits within the bedroom's edge [0, 10].
+    cluster = [
+        ((1.0, 9.85), (3.0, 9.85)),
+        ((3.0, 9.85), (6.0, 9.85)),
+    ]
+    routing = _route_cluster_by_edge(cluster, rooms, edges)
+    assert routing is not None
+    room_idx, _, _ = routing
+    assert room_idx == 0   # bedroom, not toilet
+
+
+def test_route_cluster_by_edge_skips_outdoor_rooms():
+    """A window cluster sitting between an interior room and a terrace must
+    route to the interior room — terraces are excluded from the routing pool.
+    """
+    living = Room(
+        id="living",
+        name="LIVING",
+        type=RoomType.living,
+        polygon=[
+            Point(x=0.0, y=0.0),
+            Point(x=10.0, y=0.0),
+            Point(x=10.0, y=5.0),
+            Point(x=0.0, y=5.0),
+        ],
+        ceiling_height_m=2.7,
+    )
+    terrace = Room(
+        id="terrace",
+        name="TERRACE",
+        type=RoomType.outdoor,
+        polygon=[
+            Point(x=0.0, y=5.2),
+            Point(x=10.0, y=5.2),
+            Point(x=10.0, y=10.0),
+            Point(x=0.0, y=10.0),
+        ],
+        ceiling_height_m=2.7,
+    )
+    rooms = [terrace, living]   # order: terrace first
+    edges = [_room_edge_walls(r) for r in rooms]
+    cluster = [((2.0, 5.1), (7.0, 5.1))]
+    routing = _route_cluster_by_edge(cluster, rooms, edges)
+    assert routing is not None
+    room_idx, _, _ = routing
+    assert rooms[room_idx].name == "LIVING"
+
+
+def test_route_cluster_by_edge_returns_none_when_no_qualifying_edge():
+    """Cluster floating in empty space (no room edge within tolerance) routes
+    to None so the caller falls back to the legacy point-in-polygon attach."""
+    room = Room(
+        id="r",
+        name="R",
+        type=RoomType.living,
+        polygon=[
+            Point(x=0.0, y=0.0),
+            Point(x=2.0, y=0.0),
+            Point(x=2.0, y=2.0),
+            Point(x=0.0, y=2.0),
+        ],
+        ceiling_height_m=2.7,
+    )
+    edges = [_room_edge_walls(room)]
+    cluster = [((50.0, 50.0), (51.0, 50.0))]
+    assert _route_cluster_by_edge(cluster, [room], edges) is None
 
 
 def test_attach_entities_on_real_file_populates_some_rooms():
