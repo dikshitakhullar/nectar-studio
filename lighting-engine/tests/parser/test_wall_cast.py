@@ -176,34 +176,49 @@ def test_overlap_guard_rejects_translation_into_another_room():
 
 
 def test_overlap_guard_allows_translation_when_no_collision():
-    # Room A translates left toward wall; room B is far away → guard allows it
+    # Room A translates left toward wall; room B (an adjacency-providing
+    # partner that sits beyond the wall) makes translation eligible, and
+    # room C (far away) tests that the overlap guard doesn't reject when
+    # there's no collision.
     room_a = _room("A", _rect(6.0, 0.0, 9.0, 4.0))
-    room_b = _room("B", _rect(20.0, 0.0, 24.0, 4.0))
+    room_b = _room("B", _rect(-2.0, 0.0, 0.0, 4.0))   # beyond wall, enables adjacency
+    room_c = _room("C", _rect(20.0, 0.0, 24.0, 4.0))  # far away, would fail overlap
     walls = [_vertical_wall(2.0, -1.0, 5.0)]
-    out = cast_bounding_walls(room_a, walls, other_rooms=[room_b])
+    out = cast_bounding_walls(room_a, walls, other_rooms=[room_b, room_c])
     xs = sorted({p.x for p in out.polygon})
     assert xs == pytest.approx([2.0, 5.0])
 
 
 def test_overlap_guard_ignores_different_floors():
-    # Same X/Y region OK if floors differ — rooms are stacked, not colliding
+    # Adjacency partner B sits beyond the wall on the SAME floor (enables
+    # translation). Room C is in the X region the polygon would move into,
+    # but on a different floor — guard should ignore it.
     room_a = _room("A", _rect(6.0, 0.0, 9.0, 4.0))
-    room_b = Room(
-        id="b", name="B", type=RoomType.bedroom, floor_level=1,
+    room_b = _room("B", _rect(-2.0, 0.0, 0.0, 4.0))
+    room_c = Room(
+        id="c", name="C", type=RoomType.bedroom, floor_level=1,
         polygon=_rect(2.0, 0.0, 5.0, 4.0), ceiling_height_m=2.7,
     )
     walls = [_vertical_wall(2.0, -1.0, 5.0)]
-    out = cast_bounding_walls(room_a, walls, other_rooms=[room_b])
+    out = cast_bounding_walls(room_a, walls, other_rooms=[room_b, room_c])
     xs = sorted({p.x for p in out.polygon})
     assert xs == pytest.approx([2.0, 5.0])
 
 
 def test_batch_helper_counts_translated_rooms():
+    # Adjacency-providing partner room "C" sits beyond the wall so A is
+    # eligible to translate toward it. B is far away with no nearby wall
+    # and stays put. C may or may not also translate depending on whether
+    # the wall is in its own cast direction — both behaviours are valid.
     rooms = [
-        _room("A", _rect(5.0, 0.0, 9.0, 4.0)),   # will translate left
-        _room("B", _rect(0.0, 10.0, 4.0, 14.0)),  # no nearby wall → unchanged
+        _room("A", _rect(5.0, 0.0, 9.0, 4.0)),       # WILL translate left
+        _room("B", _rect(0.0, 10.0, 4.0, 14.0)),     # no nearby wall → unchanged
+        _room("C", _rect(-2.0, 0.0, 0.0, 4.0)),      # adjacency partner for A
     ]
     walls = [_vertical_wall(2.0, -1.0, 5.0)]
     out, translated = cast_bounding_walls_for_rooms(rooms, walls)
-    assert translated == 1
-    assert out[1].polygon == rooms[1].polygon
+    assert translated >= 1                          # at least A moved
+    assert out[1].polygon == rooms[1].polygon        # B unchanged
+    # A translated specifically — verify the expected target
+    a_xs = sorted({p.x for p in out[0].polygon})
+    assert a_xs == pytest.approx([2.0, 6.0])

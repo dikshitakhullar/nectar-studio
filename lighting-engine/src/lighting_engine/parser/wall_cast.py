@@ -264,18 +264,29 @@ def _resolve_axis_translation(
     polygon_lo: float, polygon_hi: float,
     wall_lo: float | None, wall_hi: float | None,
     *,
+    has_adjacent_room_lo: bool = True,
+    has_adjacent_room_hi: bool = True,
     significant_gap_m: float = _MIN_SIGNIFICANT_GAP_M,
 ) -> float:
     """Compute one-axis translation from wall-cast results.
 
+    `has_adjacent_room_*` flags say whether another room sits beyond the
+    discovered wall on that side. The principle "rooms must be contiguous"
+    means we only push polygon edges toward walls that have a room on the
+    far side — those are interior partitions the polygon SHOULD touch.
+    Walls with no room beyond are exterior boundaries; we don't trust them
+    as translation targets because they're often unrelated to where the
+    polygon's labelled dimensions say its edge belongs.
+
     Both walls + matching polygon width → center the polygon between them.
     Both walls + polygon smaller:
         - If one side's gap is below `significant_gap_m`, the polygon is
-          already effectively at that wall. Close the OTHER side's larger
-          phantom gap.
+          essentially at that wall. Push the OTHER side toward its wall,
+          but ONLY if that side has an adjacent room (else don't move).
         - Otherwise both sides have a real gap; pick the smaller-move option
-          (closer wall) so we don't make any single side dramatically worse.
-    One wall → translate polygon's nearest edge to touch it.
+          biased toward the side with an adjacent room when only one has it.
+    One wall → translate polygon's nearest edge to touch it, only when an
+      adjacent room exists beyond that wall.
     Neither → 0.
     """
     if wall_lo is None and wall_hi is None:
@@ -283,28 +294,121 @@ def _resolve_axis_translation(
     if wall_lo is not None and wall_hi is not None:
         polygon_width = polygon_hi - polygon_lo
         wall_width = wall_hi - wall_lo
-        if wall_width > 0 and 0.85 <= polygon_width / wall_width <= 1.15:
+        # Center only when BOTH walls are interior partitions. If one side
+        # is exterior (no room beyond), centering pushes polygon away from
+        # an interior boundary it should align with toward an unrelated
+        # wall — wrong. Fall through to align-with-interior logic instead.
+        fits_between = wall_width > 0 and 0.85 <= polygon_width / wall_width <= 1.15
+        if fits_between and has_adjacent_room_lo and has_adjacent_room_hi:
             target_center = (wall_lo + wall_hi) / 2.0
             polygon_center = (polygon_lo + polygon_hi) / 2.0
             return target_center - polygon_center
         gap_lo = polygon_lo - wall_lo
         gap_hi = wall_hi - polygon_hi
-        # Asymmetric phantom-gap rule: if one side is already essentially at
-        # its wall, the other side carries the real misalignment.
+        # Asymmetric phantom-gap rule, refined for adjacency. The "polygon
+        # already at wall on one side" pattern only justifies pushing toward
+        # the other side if that other side has a room beyond it.
         if gap_lo < significant_gap_m <= gap_hi:
-            return gap_hi
+            return gap_hi if has_adjacent_room_hi else 0.0
         if gap_hi < significant_gap_m <= gap_lo:
+            return -gap_lo if has_adjacent_room_lo else 0.0
+        # Both sides have meaningful gap. Prefer the side with an adjacent
+        # room. If both or neither have one, pick the smaller move.
+        if has_adjacent_room_lo and not has_adjacent_room_hi:
             return -gap_lo
-        # Both sides have meaningful gap — pick the smaller move.
+        if has_adjacent_room_hi and not has_adjacent_room_lo:
+            return gap_hi
         if gap_lo < gap_hi:
             return -gap_lo
         return gap_hi
     if wall_lo is not None:
+        if not has_adjacent_room_lo:
+            return 0.0
         gap = polygon_lo - wall_lo
         return -gap if gap > 0 else 0.0
-    assert wall_hi is not None  # exhausted by the prior None checks
+    assert wall_hi is not None
+    if not has_adjacent_room_hi:
+        return 0.0
     gap = wall_hi - polygon_hi
     return gap if gap > 0 else 0.0
+
+
+def _has_adjacent_room_beyond_wall_x(
+    wall_x: float,
+    direction: int,
+    polygon_miny: float, polygon_maxy: float,
+    room: Room,
+    other_rooms: list[Room],
+    *,
+    max_search_m: float = _MAX_CAST_DIST_M,
+) -> bool:
+    """Is there a same-floor other room whose center is beyond wall_x in the
+    cast direction, with Y range overlapping the polygon's Y extent, within
+    `max_search_m` of wall_x? Such a room makes wall_x an interior partition
+    rather than an exterior boundary.
+    """
+    for other in other_rooms:
+        if other.id == room.id or other.floor_level != room.floor_level:
+            continue
+        ox = [p.x for p in other.polygon]
+        oy = [p.y for p in other.polygon]
+        other_minx, other_maxx = min(ox), max(ox)
+        other_miny, other_maxy = min(oy), max(oy)
+        other_cx = (other_minx + other_maxx) / 2.0
+        # On correct side of wall?
+        if direction > 0:
+            if other_cx <= wall_x:
+                continue
+            dist = other_minx - wall_x
+        else:
+            if other_cx >= wall_x:
+                continue
+            dist = wall_x - other_maxx
+        if dist > max_search_m:
+            continue
+        # Y overlap with polygon?
+        overlap_lo = max(other_miny, polygon_miny)
+        overlap_hi = min(other_maxy, polygon_maxy)
+        if overlap_hi - overlap_lo <= 0.5:   # need >0.5m perpendicular overlap
+            continue
+        return True
+    return False
+
+
+def _has_adjacent_room_beyond_wall_y(
+    wall_y: float,
+    direction: int,
+    polygon_minx: float, polygon_maxx: float,
+    room: Room,
+    other_rooms: list[Room],
+    *,
+    max_search_m: float = _MAX_CAST_DIST_M,
+) -> bool:
+    """Same as the X version, transposed for horizontal walls."""
+    for other in other_rooms:
+        if other.id == room.id or other.floor_level != room.floor_level:
+            continue
+        ox = [p.x for p in other.polygon]
+        oy = [p.y for p in other.polygon]
+        other_minx, other_maxx = min(ox), max(ox)
+        other_miny, other_maxy = min(oy), max(oy)
+        other_cy = (other_miny + other_maxy) / 2.0
+        if direction > 0:
+            if other_cy <= wall_y:
+                continue
+            dist = other_miny - wall_y
+        else:
+            if other_cy >= wall_y:
+                continue
+            dist = wall_y - other_maxy
+        if dist > max_search_m:
+            continue
+        overlap_lo = max(other_minx, polygon_minx)
+        overlap_hi = min(other_maxx, polygon_maxx)
+        if overlap_hi - overlap_lo <= 0.5:
+            continue
+        return True
+    return False
 
 
 def cast_bounding_walls(
@@ -347,12 +451,40 @@ def cast_bounding_walls(
         minx, maxx, miny, maxy, direction=+1, walls=walls,
         max_cast_dist_m=max_cast_dist_m,
     )
+    # Adjacent-room presence per direction. When the caller doesn't pass
+    # `other_rooms`, we don't have the context to check, so we trust the wall
+    # as-is (preserves single-room test semantics). When other_rooms IS
+    # provided, we gate translation on whether each wall is an interior
+    # partition (has a room beyond it) or just an exterior boundary.
+    if other_rooms is None:
+        has_adj_left = has_adj_right = has_adj_down = has_adj_up = True
+    else:
+        has_adj_left = wall_left is not None and _has_adjacent_room_beyond_wall_x(
+            wall_left, -1, miny, maxy, room, other_rooms,
+            max_search_m=max_cast_dist_m,
+        )
+        has_adj_right = wall_right is not None and _has_adjacent_room_beyond_wall_x(
+            wall_right, +1, miny, maxy, room, other_rooms,
+            max_search_m=max_cast_dist_m,
+        )
+        has_adj_down = wall_down is not None and _has_adjacent_room_beyond_wall_y(
+            wall_down, -1, minx, maxx, room, other_rooms,
+            max_search_m=max_cast_dist_m,
+        )
+        has_adj_up = wall_up is not None and _has_adjacent_room_beyond_wall_y(
+            wall_up, +1, minx, maxx, room, other_rooms,
+            max_search_m=max_cast_dist_m,
+        )
     dx = _resolve_axis_translation(
         minx, maxx, wall_left, wall_right,
+        has_adjacent_room_lo=has_adj_left,
+        has_adjacent_room_hi=has_adj_right,
         significant_gap_m=min_significant_gap_m,
     )
     dy = _resolve_axis_translation(
         miny, maxy, wall_down, wall_up,
+        has_adjacent_room_lo=has_adj_down,
+        has_adjacent_room_hi=has_adj_up,
         significant_gap_m=min_significant_gap_m,
     )
     # Zero out small components — those are the snap step's job.
