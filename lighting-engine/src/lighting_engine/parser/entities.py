@@ -54,6 +54,40 @@ class AttachSummary:
     window_segments_seen: int = 0
     window_segments_kept: int = 0
     window_segments_dropped: int = 0
+    # Doors that were detected but dropped because their position is too far
+    # from any room polygon edge — wardrobe doors, shower detail arcs, and
+    # other interior linework on the door layer that isn't a real door.
+    doors_dropped_interior: int = 0
+
+
+# A door's centroid is its chord midpoint, which sits ON the wall the door
+# is mounted in. Anything more than this from a polygon edge is interior
+# linework (wardrobe leaf, shower detail, cabinet) and should be dropped.
+_DOOR_EDGE_PROXIMITY_M = 0.4
+
+
+def _distance_to_polygon_edge(
+    point: tuple[float, float], polygon: list[Point],
+) -> float:
+    """Min perpendicular distance from `point` to any edge of `polygon`."""
+    px, py = point
+    best = math.inf
+    n = len(polygon)
+    for i in range(n):
+        a = polygon[i]
+        b = polygon[(i + 1) % n]
+        dx = b.x - a.x
+        dy = b.y - a.y
+        l2 = dx * dx + dy * dy
+        if l2 == 0:
+            continue
+        t = max(0.0, min(1.0, ((px - a.x) * dx + (py - a.y) * dy) / l2))
+        fx = a.x + t * dx
+        fy = a.y + t * dy
+        d = math.hypot(fx - px, fy - py)
+        if d < best:
+            best = d
+    return best
 
 
 def _room_centroid(room: Room) -> tuple[float, float]:
@@ -239,7 +273,16 @@ def attach_entities(
     )
     for raw in raw_doors:
         idx = attach_room_index(rooms, room_polys, raw.position)
-        wall_idx, along = _snap_to_nearest_wall(rooms[idx], raw.position)
+        room = rooms[idx]
+        # Door-edge filter: real doors sit ON the wall they open through.
+        # Anything more than ~0.4m from any polygon edge is interior linework
+        # (wardrobe leaf, shower detail, cabinet) and should be dropped.
+        # This is the same principle filter_valid_windows applies to window
+        # glyphs.
+        if _distance_to_polygon_edge(raw.position, room.polygon) > _DOOR_EDGE_PROXIMITY_M:
+            summary.doors_dropped_interior += 1
+            continue
+        wall_idx, along = _snap_to_nearest_wall(room, raw.position)
         # Width: prefer the arc-derived value (chord = 2 * r * sin(sweep/2),
         # approximated as r * sqrt(2) for the common 90° swing). Fall back
         # to a residential default when unknown.
@@ -254,7 +297,7 @@ def attach_entities(
             width_m=width_m,
             swing=DoorSwing.unknown,
         )
-        rooms[idx].doors.append(door)
+        room.doors.append(door)
         summary.doors_attached += 1
 
     # ----- WINDOWS (clustered segments on window/glass layers) -----
