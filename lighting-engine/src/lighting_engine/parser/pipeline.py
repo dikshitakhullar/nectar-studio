@@ -24,6 +24,7 @@ from lighting_engine.parser.layers import LayerRole, classify_layers
 from lighting_engine.parser.loader import load_drawing
 from lighting_engine.parser.rooms import extract_rooms
 from lighting_engine.parser.snap import Segment, snap_rooms_to_walls
+from lighting_engine.parser.wall_cast import cast_bounding_walls_for_rooms
 
 INCH_TO_M = 0.0254
 
@@ -136,6 +137,7 @@ def parse_file(
     location: str = "delhi",
     floor_level: int = 0,
     default_ceiling_height_m: float = 2.7,
+    enable_wall_cast: bool = True,
     enable_wall_snap: bool = True,
 ) -> tuple[Project, GapsReport]:
     """Parse a single DWG/DXF into a Project + GapsReport.
@@ -184,16 +186,28 @@ def parse_file(
     )
     rooms = room_result.rooms
 
-    # Wall-snap pass: re-project each room polygon's edges onto nearby real
-    # wall lines so adjacent rooms that share a wall end up with coincident
-    # edges (eliminating phantom gaps). Runs AFTER label-based placement so it
-    # only refines positions, and BEFORE entity attachment / digest computation
-    # so downstream consumers see the corrected polygons.
-    if enable_wall_snap and rooms:
+    # Wall-cast pass (large-scale translation): for each room polygon, ray-
+    # cast in 4 cardinal directions to find its actual bounding walls, then
+    # translate the polygon (preserving size) so its edges touch those walls.
+    # Handles the case where label-based placement puts the polygon metres
+    # away from any qualifying wall — outside the snap radius below. Must run
+    # BEFORE the snap step so snap does its fine refinement on a polygon
+    # already in the right region.
+    if (enable_wall_cast or enable_wall_snap) and rooms:
         local_meter_walls = _segments_to_local_meters(
             boundary_segments, region, INCH_TO_M,
         )
-        rooms, _snapped, _rejected = snap_rooms_to_walls(rooms, local_meter_walls)
+        if enable_wall_cast:
+            rooms, _translated = cast_bounding_walls_for_rooms(
+                rooms, local_meter_walls,
+            )
+        # Wall-snap pass: re-project each room polygon's edges onto nearby
+        # real wall lines so adjacent rooms that share a wall end up with
+        # coincident edges (eliminating phantom gaps).
+        if enable_wall_snap:
+            rooms, _snapped, _rejected = snap_rooms_to_walls(
+                rooms, local_meter_walls,
+            )
 
     summary = attach_entities(
         msp, rooms, layer_roles, region=region, dxf_unit_to_m=INCH_TO_M,
