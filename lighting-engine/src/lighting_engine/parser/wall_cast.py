@@ -505,8 +505,94 @@ def cast_bounding_walls(
     if other_rooms and _translation_creates_overlap(
         room, polygon, new_polygon, other_rooms,
     ):
+        # The primary translation makes overlap worse. If the polygon is
+        # CURRENTLY overlapping another room, try the OPPOSITE direction —
+        # the wall-cast results give us walls on both sides, so flipping
+        # the sign may give a polygon that escapes the existing overlap.
+        if other_rooms and _has_room_overlap(room, polygon, other_rooms):
+            # Find the candidate that minimizes overlap area. Prefer real
+            # moves over no-op so we don't silently keep the overlapping
+            # state when a wall-cast option could escape it.
+            best_polygon: list[Point] | None = None
+            best_overlap = _total_overlap_area(room, polygon, other_rooms)
+            alt_dx_options = _opposite_axis_options(
+                polygon_lo=minx, polygon_hi=maxx,
+                wall_lo=wall_left, wall_hi=wall_right,
+                current_dx=dx, significant_gap_m=min_significant_gap_m,
+            )
+            alt_dy_options = _opposite_axis_options(
+                polygon_lo=miny, polygon_hi=maxy,
+                wall_lo=wall_down, wall_hi=wall_up,
+                current_dx=dy, significant_gap_m=min_significant_gap_m,
+            )
+            for cand_dx in alt_dx_options:
+                for cand_dy in alt_dy_options:
+                    if abs(cand_dx) > max_translation_m or abs(cand_dy) > max_translation_m:
+                        continue
+                    if cand_dx == 0.0 and cand_dy == 0.0:
+                        continue
+                    cand_polygon = [Point(x=p.x + cand_dx, y=p.y + cand_dy) for p in polygon]
+                    cand_overlap = _total_overlap_area(room, cand_polygon, other_rooms)
+                    if cand_overlap < best_overlap - 0.1:
+                        best_overlap = cand_overlap
+                        best_polygon = cand_polygon
+            if best_polygon is not None:
+                return room.model_copy(update={"polygon": best_polygon})
         return room
     return room.model_copy(update={"polygon": new_polygon})
+
+
+def _has_room_overlap(
+    room: Room, polygon: list[Point], other_rooms: list[Room],
+) -> bool:
+    """Does the room currently overlap any other same-floor room by more than tol?"""
+    return _total_overlap_area(room, polygon, other_rooms) > 0.1
+
+
+def _total_overlap_area(
+    room: Room, polygon: list[Point], other_rooms: list[Room],
+) -> float:
+    """Total area in square metres that `polygon` overlaps any other same-floor room."""
+    try:
+        shape = ShapelyPolygon([(p.x, p.y) for p in polygon])
+    except (ValueError, TypeError):
+        return 0.0
+    if not shape.is_valid:
+        return 0.0
+    total = 0.0
+    for other in other_rooms:
+        if other.id == room.id or other.floor_level != room.floor_level:
+            continue
+        try:
+            other_shape = ShapelyPolygon([(p.x, p.y) for p in other.polygon])
+        except (ValueError, TypeError):
+            continue
+        if not other_shape.is_valid:
+            continue
+        total += shape.intersection(other_shape).area
+    return total
+
+
+def _opposite_axis_options(
+    *,
+    polygon_lo: float, polygon_hi: float,
+    wall_lo: float | None, wall_hi: float | None,
+    current_dx: float,
+    significant_gap_m: float,
+) -> list[float]:
+    """Possible alternative translations on one axis: 0 (no move), push to
+    wall_lo, push to wall_hi. Skip moves below the significant-gap threshold.
+    """
+    out: list[float] = [0.0]
+    if wall_lo is not None:
+        delta = wall_lo - polygon_lo
+        if abs(delta) >= significant_gap_m:
+            out.append(delta)
+    if wall_hi is not None:
+        delta = wall_hi - polygon_hi
+        if abs(delta) >= significant_gap_m:
+            out.append(delta)
+    return out
 
 
 def _translation_creates_overlap(
