@@ -56,8 +56,12 @@ class Project(Base):
     rooms: Mapped[list["RoomRecord"]] = relationship(
         back_populates="project", cascade="all, delete-orphan",
     )
+    # Composite FK on Job → rooms (project_id, id) makes Project.jobs and
+    # RoomRecord.jobs both touch jobs.project_id; declare the overlap as
+    # intentional so SQLAlchemy doesn't warn at configure_mappers() time.
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="project", cascade="all, delete-orphan",
+        overlaps="jobs",
     )
 
 
@@ -87,7 +91,9 @@ class RoomRecord(Base):
     )
 
     project: Mapped[Project] = relationship(back_populates="rooms")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="room")
+    jobs: Mapped[list["Job"]] = relationship(
+        back_populates="room", overlaps="jobs",
+    )
 
 
 class Job(Base):
@@ -120,10 +126,12 @@ class Job(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow,
     )
 
-    project: Mapped[Project] = relationship(back_populates="jobs")
-    # The room relationship shares project_id with the project relationship
-    # (composite FK on rooms (project_id, id)); declare the overlap so
-    # SQLAlchemy knows it's intentional rather than a misconfiguration.
+    # Both `project` and `room` write back to jobs.project_id (the composite
+    # FK on rooms means room.project_id is the same column). Declare the
+    # overlap on both so SQLAlchemy doesn't warn.
+    project: Mapped[Project] = relationship(
+        back_populates="jobs", overlaps="jobs,room",
+    )
     room: Mapped[RoomRecord] = relationship(
         back_populates="jobs", overlaps="jobs,project",
     )
