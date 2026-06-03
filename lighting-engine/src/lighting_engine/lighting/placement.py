@@ -92,7 +92,7 @@ def _reasoning_for(
     return (
         f"Ambient fill for {room_type.value} — target {standard.target_lux} lux "
         f"× {digest.area_sqm:.1f} sqm ≈ {needed:.0f} lm needed "
-        f"(UF 0.5, MF 0.8). {count} × {spec.wattage_w:.0f}W "
+        f"(UF 0.6, MF 0.8). {count} × {spec.wattage_w:.0f}W "
         f"{spec.cct_k}K CRI{spec.cri} downlights "
         f"({spec.lumens:.0f} lm each) on a {spec.s_mh_ratio}×MH grid."
     )

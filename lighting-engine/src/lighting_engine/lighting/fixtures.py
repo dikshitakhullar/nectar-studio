@@ -24,13 +24,13 @@ class FixtureSpec:
     s_mh_ratio: float = 1.5   # spacing-to-mounting-height (typical residential ambient)
 
 
-# Indian residential default skews warm. Both fixtures are 12W / 1200lm / CRI 90 —
-# same architectural form, just different CCT.
+# Indian residential default skews warm. Both fixtures are 12W / 1500lm / CRI 90 —
+# same architectural form, just different CCT. 1500 lm reflects modern ~100 lm/W LEDs.
 DEFAULT_WARM_DOWNLIGHT = FixtureSpec(
     sku="GEN-DL-12-2700",
     name="12W warm downlight",
     wattage_w=12.0,
-    lumens=1200.0,
+    lumens=1500.0,
     cct_k=2700,
     cri=90,
     beam_angle_deg=60.0,
@@ -40,7 +40,7 @@ DEFAULT_COOL_DOWNLIGHT = FixtureSpec(
     sku="GEN-DL-12-4000",
     name="12W cool downlight",
     wattage_w=12.0,
-    lumens=1200.0,
+    lumens=1500.0,
     cct_k=4000,
     cri=90,
     beam_angle_deg=60.0,

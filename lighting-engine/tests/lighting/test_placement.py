@@ -43,7 +43,7 @@ def test_ambient_layer_places_fixtures_in_a_living_room():
         assert f.source == FixtureSource.proposed
         assert f.layer == LightingLayer.ambient
         assert f.cct_k == 2700        # warm CCT for living
-        assert f.lumens == 1200.0
+        assert f.lumens == 1500.0
         assert "Living" in f.reasoning or "living" in f.reasoning
 
 

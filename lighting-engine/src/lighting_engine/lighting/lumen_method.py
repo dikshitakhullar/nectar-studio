@@ -16,7 +16,8 @@ aging. 0.8 is the textbook residential default.
 import math
 
 # Constants — typed in code, NEVER fuzzy-retrieved.
-UTILIZATION_FACTOR = 0.5     # fraction of fixture lumens reaching the work plane
+# UF=0.6 assumes modern white-walled residential interiors with 60° beam downlights.
+UTILIZATION_FACTOR = 0.6     # fraction of fixture lumens reaching the work plane
 MAINTENANCE_FACTOR = 0.8     # dirt + lamp depreciation derating
 WORK_PLANE_HEIGHT_M = 0.8    # typical desk/counter height
 
