@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from lighting_engine.api._generation_pipeline import run_generation_pipeline
 from lighting_engine.api.db import get_session, get_session_factory
 from lighting_engine.api.schemas import (
     ConfirmedRoom,
@@ -175,7 +176,11 @@ async def generate(
     )
     await session.commit()
 
-    background_tasks.add_task(run_stub_generation, job_id, project_id, room_id)
+    # Phase 7: real pipeline. The stub remains exposed below for tests that
+    # want to assert end-to-end behaviour without the LLM cost.
+    background_tasks.add_task(
+        run_generation_pipeline, job_id, project_id, room_id,
+    )
     return GenerateResponse(job_id=job_id)
 
 
