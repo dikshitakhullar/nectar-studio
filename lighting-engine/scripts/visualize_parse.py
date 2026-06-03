@@ -21,6 +21,7 @@ from lighting_engine.parser.geometry import find_plan_region
 from lighting_engine.parser.layers import LayerRole, classify_layers
 from lighting_engine.parser.loader import load_drawing
 from lighting_engine.parser.pipeline import parse_file
+from lighting_engine.parser.window_filter import filter_valid_windows
 
 INCH_TO_M = 0.0254
 _PALETTE = [
@@ -121,7 +122,15 @@ def _bounds(
 
 
 def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
-    walls, windows = _local_boundary_segments(dxf_path)
+    walls, raw_windows = _local_boundary_segments(dxf_path)
+    # Apply the same "must be on an interior room wall" filter the pipeline
+    # uses, so the SVG shows only the windows that survive — phantom window-
+    # layer linework on terraces / courtyards / staircases is excluded.
+    windows, dropped_windows = filter_valid_windows(raw_windows, project.rooms)
+    print(
+        f"Window segments: kept {len(windows)} / dropped "
+        f"{len(dropped_windows)} (of {len(raw_windows)} raw on window/GLASS layers)"
+    )
     minx, miny, maxx, maxy = _bounds(walls, project)
     width = maxx - minx
     height = maxy - miny

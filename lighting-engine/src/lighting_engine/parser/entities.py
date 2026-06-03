@@ -29,6 +29,7 @@ from lighting_engine.models.geometry import (
 )
 from lighting_engine.parser.geometry import PlanRegion
 from lighting_engine.parser.layers import LayerRole
+from lighting_engine.parser.window_filter import filter_valid_windows
 
 # Distance threshold (meters) for grouping window line-segment endpoints into a
 # single window cluster. Tuned to typical mullion/frame spacing.
@@ -43,6 +44,13 @@ class AttachSummary:
     furniture_attached: int = 0
     fixtures_attached: int = 0
     skipped_outside_region: int = 0
+    # Window-filter accounting: how many raw window LINE segments we saw on
+    # window/GLASS layers vs. how many survived the "must sit on an interior
+    # room wall" filter. The dropped count is parapet/terrace/courtyard
+    # boundary linework that lives on the window layer but isn't a window.
+    window_segments_seen: int = 0
+    window_segments_kept: int = 0
+    window_segments_dropped: int = 0
 
 
 def _room_centroid(room: Room) -> tuple[float, float]:
@@ -240,8 +248,12 @@ def attach_entities(
         summary.doors_attached += 1
 
     # ----- WINDOWS (clustered LINE segments on window/glass layers) -----
-    win_segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    win_glazed_flag: list[bool] = []
+    # First collect every window-layer LINE in local-meter coords. We will
+    # then drop any segment that isn't sitting on an interior room's wall —
+    # those are parapet/terrace/courtyard boundary lines that happen to live
+    # on the window/GLASS layer but don't represent a real window.
+    raw_win_segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    raw_win_glazed_flag: list[bool] = []
     for e in msp.query("LINE"):
         if e.dxf.layer not in window_layers:
             continue
@@ -253,8 +265,27 @@ def attach_entities(
             continue
         a = _to_local_m(x1, y1, region, dxf_unit_to_m)
         b = _to_local_m(x2, y2, region, dxf_unit_to_m)
-        win_segments.append((a, b))
-        win_glazed_flag.append("glass" in e.dxf.layer.lower())
+        raw_win_segments.append((a, b))
+        raw_win_glazed_flag.append("glass" in e.dxf.layer.lower())
+
+    summary.window_segments_seen = len(raw_win_segments)
+    kept_segments, dropped_segments = filter_valid_windows(
+        raw_win_segments, rooms,
+    )
+    summary.window_segments_kept = len(kept_segments)
+    summary.window_segments_dropped = len(dropped_segments)
+
+    # Carry the glazed-flag through the filter. `kept_segments` preserves
+    # input order, so we walk the raw list in lock-step with a pointer into
+    # the kept list and pick out the matching glazed flags.
+    win_segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    win_glazed_flag: list[bool] = []
+    kept_idx = 0
+    for seg, glazed in zip(raw_win_segments, raw_win_glazed_flag, strict=True):
+        if kept_idx < len(kept_segments) and seg == kept_segments[kept_idx]:
+            win_segments.append(seg)
+            win_glazed_flag.append(glazed)
+            kept_idx += 1
 
     clusters = cluster_window_lines(win_segments, max_gap_m=_WINDOW_CLUSTER_GAP_M)
     for ci, cluster in enumerate(clusters):
