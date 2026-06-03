@@ -1,0 +1,1226 @@
+openapi: 3.1.0
+info:
+  title: nectar-studio lighting engine
+  description: 'FastAPI service for the v1 lighting-design pipeline. Spec: docs/superpowers/specs/2026-06-03-v1-design.md'
+  version: 0.1.0
+paths:
+  /api/projects:
+    post:
+      tags:
+      - projects
+      summary: Create a project from DWG/DXF uploads
+      description: 'Upload a ceiling (+ optional furniture) drawing and parse it.
+
+
+        Phase 2: only the ceiling file is parsed; the furniture upload is stored
+
+        on disk for later phases.'
+      operationId: create_project_endpoint_api_projects_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_create_project_endpoint_api_projects_post'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCreateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms:
+    get:
+      tags:
+      - projects
+      summary: List rooms for a project
+      operationId: list_project_rooms_api_projects__project_id__rooms_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}:
+    get:
+      tags:
+      - rooms
+      summary: Get Room Endpoint
+      operationId: get_room_endpoint_api_projects__project_id__rooms__room_id__get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRoom'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - rooms
+      summary: Post Room Basics
+      description: Merge /studio/room-basics clarifications into the ConfirmedRoom.
+      operationId: post_room_basics_api_projects__project_id__rooms__room_id__post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClarificationRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRoom'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/walls:
+    get:
+      tags:
+      - rooms
+      summary: Get Room Walls
+      operationId: get_room_walls_api_projects__project_id__rooms__room_id__walls_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WallsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/walls/{wall_index}:
+    post:
+      tags:
+      - rooms
+      summary: Post Room Wall
+      description: Update a single wall confirmation.
+      operationId: post_room_wall_api_projects__project_id__rooms__room_id__walls__wall_index__post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      - name: wall_index
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Wall Index
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WallConfirmation'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRoom'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/furniture:
+    post:
+      tags:
+      - rooms
+      summary: Post Room Furniture
+      operationId: post_room_furniture_api_projects__project_id__rooms__room_id__furniture_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FurnitureRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRoom'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/brief:
+    post:
+      tags:
+      - rooms
+      summary: Post Room Brief
+      operationId: post_room_brief_api_projects__project_id__rooms__room_id__brief_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BriefRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedRoom'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/generate:
+    post:
+      tags:
+      - generation
+      summary: Generate
+      description: "Kick off a background generation job for a (project, room) pair.\n\
+        \nGeneric-tier rooms are explicitly rejected with 501 in v1 per spec \xA7\
+        3.1."
+      operationId: generate_api_projects__project_id__rooms__room_id__generate_post
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/jobs/{job_id}:
+    get:
+      tags:
+      - generation
+      summary: Get Job Status
+      operationId: get_job_status_api_jobs__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatus'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects/{project_id}/rooms/{room_id}/plan:
+    get:
+      tags:
+      - generation
+      summary: Get Plan
+      operationId: get_plan_api_projects__project_id__rooms__room_id__plan_get
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Room Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /healthz:
+    get:
+      tags:
+      - health
+      summary: Healthz
+      description: "Liveness probe \u2014 returns 200 once the app is accepting requests."
+      operationId: healthz_healthz_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  schemas:
+    Body_create_project_endpoint_api_projects_post:
+      properties:
+        ceiling:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Ceiling
+          description: Ceiling DWG or DXF file
+        furniture:
+          anyOf:
+          - type: string
+            contentMediaType: application/octet-stream
+          - type: 'null'
+          title: Furniture
+          description: Furniture DWG or DXF file (optional in Phase 2)
+        project_name:
+          type: string
+          title: Project Name
+          default: Untitled project
+        location:
+          type: string
+          title: Location
+          default: delhi
+      type: object
+      required:
+      - ceiling
+      title: Body_create_project_endpoint_api_projects_post
+    BriefRequest:
+      properties:
+        intent_mood:
+          anyOf:
+          - $ref: '#/components/schemas/Mood'
+          - type: 'null'
+        activities:
+          items:
+            type: string
+          type: array
+          title: Activities
+        time_of_use:
+          items:
+            $ref: '#/components/schemas/TimeOfDay'
+          type: array
+          title: Time Of Use
+        notes:
+          type: string
+          title: Notes
+          default: ''
+      type: object
+      title: BriefRequest
+      description: Body for POST /api/projects/{pid}/rooms/{rid}/brief.
+    CeilingFeature:
+      properties:
+        id:
+          type: string
+          title: Id
+        kind:
+          type: string
+          title: Kind
+        polygon:
+          items:
+            $ref: '#/components/schemas/Point'
+          type: array
+          title: Polygon
+        depth_m:
+          type: number
+          title: Depth M
+          default: 0.0
+      type: object
+      required:
+      - id
+      - kind
+      - polygon
+      title: CeilingFeature
+    CeilingType:
+      type: string
+      enum:
+      - none
+      - flat
+      - sloped
+      - mixed
+      title: CeilingType
+    ClarificationRequest:
+      properties:
+        type_confirmed:
+          anyOf:
+          - $ref: '#/components/schemas/RoomType'
+          - type: 'null'
+        length_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Length M
+        width_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Width M
+        ceiling_height_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Ceiling Height M
+        ceiling_type:
+          anyOf:
+          - $ref: '#/components/schemas/CeilingType'
+          - type: 'null'
+        main_window_orientation:
+          anyOf:
+          - $ref: '#/components/schemas/Direction'
+          - type: 'null'
+        occupants:
+          anyOf:
+          - items:
+              $ref: '#/components/schemas/Occupant'
+            type: array
+          - type: 'null'
+          title: Occupants
+        floor_finish:
+          anyOf:
+          - $ref: '#/components/schemas/FinishTone'
+          - type: 'null'
+        wall_finish:
+          anyOf:
+          - $ref: '#/components/schemas/FinishTone'
+          - type: 'null'
+      type: object
+      title: ClarificationRequest
+      description: 'Body for POST /api/projects/{pid}/rooms/{rid} (the /studio/room-basics
+
+        screen).'
+    ConfirmedRoom:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        type_inferred:
+          $ref: '#/components/schemas/RoomType'
+        polygon_inferred:
+          items:
+            $ref: '#/components/schemas/Point'
+          type: array
+          title: Polygon Inferred
+        doors_parsed:
+          items:
+            $ref: '#/components/schemas/Door'
+          type: array
+          title: Doors Parsed
+        windows_parsed:
+          items:
+            $ref: '#/components/schemas/Window'
+          type: array
+          title: Windows Parsed
+        furniture_parsed:
+          items:
+            $ref: '#/components/schemas/Furniture'
+          type: array
+          title: Furniture Parsed
+        ceiling_features_parsed:
+          items:
+            $ref: '#/components/schemas/CeilingFeature'
+          type: array
+          title: Ceiling Features Parsed
+        tier:
+          $ref: '#/components/schemas/RoomTier'
+          default: first_class
+        type_confirmed:
+          anyOf:
+          - $ref: '#/components/schemas/RoomType'
+          - type: 'null'
+        length_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Length M
+        width_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Width M
+        ceiling_height_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Ceiling Height M
+        ceiling_type:
+          anyOf:
+          - $ref: '#/components/schemas/CeilingType'
+          - type: 'null'
+        main_window_orientation:
+          anyOf:
+          - $ref: '#/components/schemas/Direction'
+          - type: 'null'
+        occupants:
+          items:
+            $ref: '#/components/schemas/Occupant'
+          type: array
+          title: Occupants
+        floor_finish:
+          anyOf:
+          - $ref: '#/components/schemas/FinishTone'
+          - type: 'null'
+        wall_finish:
+          anyOf:
+          - $ref: '#/components/schemas/FinishTone'
+          - type: 'null'
+        walls:
+          items:
+            $ref: '#/components/schemas/WallConfirmation'
+          type: array
+          title: Walls
+        furniture_notes:
+          type: string
+          title: Furniture Notes
+          default: ''
+        intent_mood:
+          anyOf:
+          - $ref: '#/components/schemas/Mood'
+          - type: 'null'
+        activities:
+          items:
+            type: string
+          type: array
+          title: Activities
+        time_of_use:
+          items:
+            $ref: '#/components/schemas/TimeOfDay'
+          type: array
+          title: Time Of Use
+        provenance:
+          additionalProperties:
+            type: string
+          type: object
+          title: Provenance
+      type: object
+      required:
+      - id
+      - name
+      - type_inferred
+      - polygon_inferred
+      title: ConfirmedRoom
+      description: "The merge target \u2014 one blob per (project_id, room_id).\n\n\
+        Mirrors spec \xA73.2. Stored as a JSON column on the RoomRecord ORM model."
+    Direction:
+      type: string
+      enum:
+      - N
+      - S
+      - E
+      - W
+      title: Direction
+      description: "Cardinal direction \u2014 used for main window orientation."
+    Door:
+      properties:
+        id:
+          type: string
+          title: Id
+        wall_index:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Wall Index
+        along_wall:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Along Wall
+        width_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Width M
+        height_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Height M
+          default: 2.1
+        swing:
+          $ref: '#/components/schemas/DoorSwing'
+          default: unknown
+      type: object
+      required:
+      - id
+      - width_m
+      title: Door
+    DoorSwing:
+      type: string
+      enum:
+      - in
+      - out
+      - sliding
+      - unknown
+      title: DoorSwing
+    FinishTone:
+      type: string
+      enum:
+      - light
+      - mid
+      - dark
+      title: FinishTone
+    FixtureRow:
+      properties:
+        sku:
+          type: string
+          title: Sku
+        name:
+          type: string
+          title: Name
+        wattage_w:
+          type: number
+          title: Wattage W
+        lumens:
+          type: number
+          title: Lumens
+        cct_k:
+          type: integer
+          title: Cct K
+        cri:
+          type: integer
+          title: Cri
+        beam_angle_deg:
+          type: number
+          title: Beam Angle Deg
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - sku
+      - name
+      - wattage_w
+      - lumens
+      - cct_k
+      - cri
+      - beam_angle_deg
+      - count
+      title: FixtureRow
+    Furniture:
+      properties:
+        id:
+          type: string
+          title: Id
+        raw_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Raw Label
+        type:
+          type: string
+          title: Type
+          default: unknown
+        position:
+          $ref: '#/components/schemas/Point'
+        footprint:
+          items:
+            $ref: '#/components/schemas/Point'
+          type: array
+          title: Footprint
+          default: []
+      type: object
+      required:
+      - id
+      - position
+      title: Furniture
+    FurnitureRequest:
+      properties:
+        furniture_notes:
+          type: string
+          title: Furniture Notes
+          default: ''
+        mood:
+          anyOf:
+          - $ref: '#/components/schemas/Mood'
+          - type: 'null'
+        activities:
+          items:
+            type: string
+          type: array
+          title: Activities
+      type: object
+      title: FurnitureRequest
+      description: Body for POST /api/projects/{pid}/rooms/{rid}/furniture.
+    GenerateResponse:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+      type: object
+      required:
+      - job_id
+      title: GenerateResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+          default: ok
+        service:
+          type: string
+          title: Service
+          default: lighting-engine
+        version:
+          type: string
+          title: Version
+      type: object
+      required:
+      - version
+      title: HealthResponse
+    JobStatus:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        project_id:
+          type: string
+          title: Project Id
+        room_id:
+          type: string
+          title: Room Id
+        status:
+          $ref: '#/components/schemas/JobStatusValue'
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        result_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Result Url
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - job_id
+      - project_id
+      - room_id
+      - status
+      - created_at
+      - updated_at
+      title: JobStatus
+    JobStatusValue:
+      type: string
+      enum:
+      - pending
+      - running
+      - done
+      - failed
+      title: JobStatusValue
+    LuxStats:
+      properties:
+        mean_lux:
+          type: number
+          title: Mean Lux
+        min_lux:
+          type: number
+          title: Min Lux
+        max_lux:
+          type: number
+          title: Max Lux
+        uniformity:
+          type: number
+          title: Uniformity
+        target_lux:
+          type: number
+          title: Target Lux
+        meets_target:
+          type: boolean
+          title: Meets Target
+      type: object
+      required:
+      - mean_lux
+      - min_lux
+      - max_lux
+      - uniformity
+      - target_lux
+      - meets_target
+      title: LuxStats
+    Mood:
+      type: string
+      enum:
+      - cozy
+      - productive
+      - wind_down
+      - entertain
+      title: Mood
+    Occupant:
+      type: string
+      enum:
+      - kids
+      - young_adult
+      - adult
+      - elderly
+      title: Occupant
+    PlanResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        room_id:
+          type: string
+          title: Room Id
+        rcp_svg:
+          type: string
+          title: Rcp Svg
+        furniture_svg:
+          type: string
+          title: Furniture Svg
+        lux_uniformity:
+          $ref: '#/components/schemas/LuxStats'
+        fixture_schedule:
+          items:
+            $ref: '#/components/schemas/FixtureRow'
+          type: array
+          title: Fixture Schedule
+        design_rationale:
+          type: string
+          title: Design Rationale
+        design_notes:
+          items:
+            type: string
+          type: array
+          title: Design Notes
+        warnings:
+          items:
+            type: string
+          type: array
+          title: Warnings
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+      type: object
+      required:
+      - project_id
+      - room_id
+      - rcp_svg
+      - furniture_svg
+      - lux_uniformity
+      - fixture_schedule
+      - design_rationale
+      - design_notes
+      - warnings
+      title: PlanResponse
+    Point:
+      properties:
+        x:
+          type: number
+          title: X
+        y:
+          type: number
+          title: Y
+      type: object
+      required:
+      - x
+      - y
+      title: Point
+    ProjectCreateResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        rooms:
+          items:
+            $ref: '#/components/schemas/RoomSummary'
+          type: array
+          title: Rooms
+      type: object
+      required:
+      - project_id
+      - rooms
+      title: ProjectCreateResponse
+    RoomDims:
+      properties:
+        length_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Length M
+        width_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Width M
+      type: object
+      required:
+      - length_m
+      - width_m
+      title: RoomDims
+      description: Bounding-box dimensions of a room polygon.
+    RoomListResponse:
+      properties:
+        rooms:
+          items:
+            $ref: '#/components/schemas/RoomSummary'
+          type: array
+          title: Rooms
+      type: object
+      required:
+      - rooms
+      title: RoomListResponse
+    RoomSummary:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        type:
+          $ref: '#/components/schemas/RoomType'
+        dims:
+          $ref: '#/components/schemas/RoomDims'
+        ceiling_height_m:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Ceiling Height M
+        polygon:
+          items:
+            $ref: '#/components/schemas/Point'
+          type: array
+          title: Polygon
+        doors:
+          items:
+            $ref: '#/components/schemas/Door'
+          type: array
+          title: Doors
+        windows:
+          items:
+            $ref: '#/components/schemas/Window'
+          type: array
+          title: Windows
+        confidence:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+          default: 1.0
+        tier:
+          $ref: '#/components/schemas/RoomTier'
+        status:
+          type: string
+          title: Status
+          default: new
+      type: object
+      required:
+      - id
+      - name
+      - type
+      - dims
+      - polygon
+      - doors
+      - windows
+      - tier
+      title: RoomSummary
+      description: "Lightweight room descriptor returned after upload / on the rooms\
+        \ list.\n\n`ceiling_height_m` is `None` until the designer confirms a value\
+        \ via\n/studio/room-basics. The parser does NOT infer ceiling height from\
+        \ the\nDXF (RCPs occasionally carry tags, but reliably extracting them is\
+        \ v1.1+);\nthe studio pre-fills its input with the typical residential default\
+        \ and\nthe user accepts or edits. `POST /generate` rejects with 400 if this\
+        \ is\nstill None \u2014 per spec \xA73.3 ceiling_height_m is one of three\
+        \ required\nfields before plan generation can run."
+    RoomTier:
+      type: string
+      enum:
+      - first_class
+      - generic
+      title: RoomTier
+      description: "Which tier of the room filter a parsed room falls into (spec \xA7\
+        3.1)."
+    RoomType:
+      type: string
+      enum:
+      - living
+      - dining
+      - bedroom
+      - kitchen
+      - bathroom
+      - study
+      - hallway
+      - staircase
+      - foyer
+      - outdoor
+      - unknown
+      title: RoomType
+    TimeOfDay:
+      type: string
+      enum:
+      - morning
+      - evening
+      - late_night
+      title: TimeOfDay
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WallConfirmation:
+      properties:
+        index:
+          type: integer
+          minimum: 0.0
+          title: Index
+        confirm:
+          type: boolean
+          title: Confirm
+          default: true
+        doors_confirmed:
+          items:
+            $ref: '#/components/schemas/Door'
+          type: array
+          title: Doors Confirmed
+        windows_confirmed:
+          items:
+            $ref: '#/components/schemas/Window'
+          type: array
+          title: Windows Confirmed
+        notes:
+          type: string
+          title: Notes
+          default: ''
+      type: object
+      required:
+      - index
+      title: WallConfirmation
+      description: Per-wall confirmation payload from /studio/walls.
+    WallsResponse:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+        room_id:
+          type: string
+          title: Room Id
+        walls:
+          items:
+            $ref: '#/components/schemas/WallConfirmation'
+          type: array
+          title: Walls
+      type: object
+      required:
+      - project_id
+      - room_id
+      - walls
+      title: WallsResponse
+    Window:
+      properties:
+        id:
+          type: string
+          title: Id
+        wall_index:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Wall Index
+        along_wall:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Along Wall
+        width_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Width M
+        height_m:
+          type: number
+          exclusiveMinimum: 0.0
+          title: Height M
+        sill_height_m:
+          type: number
+          minimum: 0.0
+          title: Sill Height M
+        is_glazed_door:
+          type: boolean
+          title: Is Glazed Door
+          default: false
+      type: object
+      required:
+      - id
+      - width_m
+      - height_m
+      - sill_height_m
+      title: Window
