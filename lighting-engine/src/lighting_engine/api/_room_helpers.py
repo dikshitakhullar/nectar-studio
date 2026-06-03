@@ -13,7 +13,6 @@ from lighting_engine.api.schemas import (
 )
 from lighting_engine.models.geometry import Point, Room, RoomType
 
-
 # Spec §3.1 — room tier mapping. The parser's RoomType vocabulary is narrower
 # than the spec's (which lists 9 first-class + 4 generic types), so this is a
 # best-effort mapping for v1; Phase 1 will deliver a proper classifier whose

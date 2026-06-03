@@ -11,7 +11,7 @@ can wire up the polling UI before phases 3-6 land.
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,7 +65,7 @@ def _stub_plan_response(project_id: str, room_id: str) -> PlanResponse:
         design_notes=[],
         warnings=["stub: phase 3+ not yet integrated"],
         metadata={
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "model_used": "stub",
             "prompt_cache_hit_rate": 0.0,
         },
@@ -157,7 +157,9 @@ async def generate(
     missing: list[str] = []
     if confirmed.ceiling_height_m is None:
         missing.append("ceiling_height_m")
-    if confirmed.type_confirmed is None and confirmed.type_inferred is None:
+    # Per spec §3.3, type_confirmed is required. type_inferred is always set
+    # by the parser (RoomType, non-None), so no fallback is needed.
+    if confirmed.type_confirmed is None:
         missing.append("type_confirmed")
     if confirmed.main_window_orientation is None:
         missing.append("main_window_orientation")

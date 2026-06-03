@@ -16,9 +16,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-
-_ENGINE: AsyncEngine | None = None
-_SESSION_FACTORY: async_sessionmaker[AsyncSession] | None = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _default_db_url() -> str:
@@ -41,25 +40,25 @@ def get_database_url() -> str:
 
 def get_engine() -> AsyncEngine:
     """Lazy-initialise the global async engine."""
-    global _ENGINE, _SESSION_FACTORY
-    if _ENGINE is None:
+    global _engine, _session_factory
+    if _engine is None:
         url = get_database_url()
         # SQLite-specific: ``check_same_thread=False`` is irrelevant under
         # aiosqlite (driver is single-threaded async). No special connect_args
         # needed.
-        _ENGINE = create_async_engine(url, future=True, echo=False)
-        _SESSION_FACTORY = async_sessionmaker(
-            bind=_ENGINE, expire_on_commit=False, class_=AsyncSession,
+        _engine = create_async_engine(url, future=True, echo=False)
+        _session_factory = async_sessionmaker(
+            bind=_engine, expire_on_commit=False, class_=AsyncSession,
         )
-    return _ENGINE
+    return _engine
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Return the global session factory, initialising the engine if needed."""
-    if _SESSION_FACTORY is None:
+    if _session_factory is None:
         get_engine()
-    assert _SESSION_FACTORY is not None
-    return _SESSION_FACTORY
+    assert _session_factory is not None
+    return _session_factory
 
 
 async def init_db() -> None:
@@ -77,11 +76,11 @@ async def init_db() -> None:
 
 async def dispose_db() -> None:
     """Close the engine (FastAPI shutdown hook + test teardown)."""
-    global _ENGINE, _SESSION_FACTORY
-    if _ENGINE is not None:
-        await _ENGINE.dispose()
-        _ENGINE = None
-        _SESSION_FACTORY = None
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+        _session_factory = None
 
 
 def reset_engine_for_tests() -> None:
@@ -91,9 +90,9 @@ def reset_engine_for_tests() -> None:
     Note: callers are responsible for awaiting ``dispose_db()`` first if the
     engine was actively used.
     """
-    global _ENGINE, _SESSION_FACTORY
-    _ENGINE = None
-    _SESSION_FACTORY = None
+    global _engine, _session_factory
+    _engine = None
+    _session_factory = None
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

@@ -4,7 +4,7 @@ These functions wrap ``AsyncSession`` so the route handlers stay focused on
 HTTP semantics, not SQLAlchemy syntax.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -17,7 +17,6 @@ from lighting_engine.api.schemas import (
     PlanResponse,
     RoomTier,
 )
-
 
 # ---------------------------------------------------------------------------
 # Projects
@@ -101,7 +100,7 @@ async def update_room_confirmed(
     room.confirmed_room = confirmed.model_dump(mode="json")
     if status is not None:
         room.status = status
-    room.updated_at = datetime.now(timezone.utc)
+    room.updated_at = datetime.now(UTC)
     await session.flush()
     return room
 
@@ -145,7 +144,7 @@ async def update_job_status(
         job.error = error
     if result is not None:
         job.result = result.model_dump(mode="json")
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.now(UTC)
     await session.flush()
     return job
 

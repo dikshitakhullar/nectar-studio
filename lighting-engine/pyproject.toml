@@ -16,6 +16,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "sqlalchemy>=2.0",
   "aiosqlite>=0.20",
+  "greenlet>=3.0",
 ]
 
 [dependency-groups]
@@ -41,6 +42,11 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# FastAPI uses `Depends(...)` in argument defaults — that's the idiomatic
+# pattern. Don't fire B008 on those calls.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.UploadFile"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]

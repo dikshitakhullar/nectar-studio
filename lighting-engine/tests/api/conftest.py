@@ -105,9 +105,10 @@ def seeded_project(client: TestClient, tmp_db_url: str) -> dict[str, str]:
 
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from lighting_engine.api.schemas import ConfirmedRoom, RoomTier
+    from lighting_engine.api._room_helpers import confirmed_room_from_parsed
+    from lighting_engine.api.schemas import RoomTier
     from lighting_engine.api.storage import create_project, create_room
-    from lighting_engine.models.geometry import Point, RoomType
+    from lighting_engine.models.geometry import Point, Room, RoomType
 
     project_id = str(uuid.uuid4())
     room_id = str(uuid.uuid4())
@@ -126,17 +127,24 @@ def seeded_project(client: TestClient, tmp_db_url: str) -> dict[str, str]:
                     furniture_path=None,
                     parsed_ir=None,
                 )
-                confirmed = ConfirmedRoom(
+                # Use the production helper so the fixture stays in lockstep
+                # with the real construction path — same provenance dict, same
+                # downstream behaviour.
+                parsed_room = Room(
                     id=room_id,
                     name="Living",
-                    type_inferred=RoomType.living,
-                    polygon_inferred=[
+                    type=RoomType.living,
+                    floor_level=0,
+                    polygon=[
                         Point(x=0.0, y=0.0),
                         Point(x=5.0, y=0.0),
                         Point(x=5.0, y=4.0),
                         Point(x=0.0, y=4.0),
                     ],
-                    tier=RoomTier.first_class,
+                    ceiling_height_m=2.7,
+                )
+                confirmed = confirmed_room_from_parsed(
+                    parsed_room, RoomTier.first_class,
                 )
                 await create_room(
                     session,

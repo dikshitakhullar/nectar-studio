@@ -19,12 +19,10 @@ from lighting_engine.models.geometry import (
     CeilingFeature,
     Door,
     Furniture,
-    LightingLayer,
     Point,
     RoomType,
     Window,
 )
-
 
 # ---------------------------------------------------------------------------
 # Enums (clarification vocabulary; see spec §3.2)

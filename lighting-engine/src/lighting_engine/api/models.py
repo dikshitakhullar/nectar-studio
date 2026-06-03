@@ -11,7 +11,7 @@ Audit columns (``created_at`` / ``updated_at``) are populated by SQLAlchemy
 defaults so they show up in any logs the studio surfaces.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
@@ -25,7 +25,7 @@ from sqlalchemy.types import JSON
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
