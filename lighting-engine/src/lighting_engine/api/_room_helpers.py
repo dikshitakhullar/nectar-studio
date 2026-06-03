@@ -99,6 +99,10 @@ def room_summary_from_record(
         name=name,
         type=confirmed.type_confirmed or confirmed.type_inferred,
         dims=room_dims(confirmed.polygon_inferred),
+        # Surface the user-confirmed value when present, else None — the
+        # studio uses the None signal to pre-fill its input with a typical
+        # default rather than overriding the user's actual setting.
+        ceiling_height_m=confirmed.ceiling_height_m,
         polygon=list(confirmed.polygon_inferred),
         doors=list(confirmed.doors_parsed),
         windows=list(confirmed.windows_parsed),

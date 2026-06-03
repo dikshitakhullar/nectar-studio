@@ -12,6 +12,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from dotenv import find_dotenv, load_dotenv
+
+# Load .env.local (preferred — monorepo Next.js convention) or fall back to
+# .env. Walks up from cwd so it finds the file at the nectar-studio root even
+# when pytest is invoked from the lighting-engine subdirectory. Done at
+# import time so `pytest.mark.skipif(not os.environ.get(...))` decorators
+# evaluated during collection see the variables.
+load_dotenv(find_dotenv(".env.local", usecwd=True) or find_dotenv(usecwd=True))
+
 _root = Path(__file__).parent.parent
 _scripts_init = _root / "scripts" / "__init__.py"
 _scripts_vp = _root / "scripts" / "visualize_parse.py"

@@ -8,13 +8,20 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from dotenv import find_dotenv, load_dotenv
 
-from lighting_engine import __version__
-from lighting_engine.api.db import dispose_db, init_db
-from lighting_engine.api.routes import generation, projects, rooms
-from lighting_engine.api.schemas import HealthResponse
+# Load .env.local (preferred — monorepo Next.js convention) or .env, walking
+# up from cwd so the file at the nectar-studio monorepo root is picked up.
+# Must happen BEFORE any env-var reads below (CORS_ALLOWED_ORIGINS etc.).
+load_dotenv(find_dotenv(".env.local", usecwd=True) or find_dotenv(usecwd=True))
+
+from fastapi import FastAPI  # noqa: E402 — must follow dotenv load
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from lighting_engine import __version__  # noqa: E402
+from lighting_engine.api.db import dispose_db, init_db  # noqa: E402
+from lighting_engine.api.routes import generation, projects, rooms  # noqa: E402
+from lighting_engine.api.schemas import HealthResponse  # noqa: E402
 
 # Origins that are *always* allowed; the env var ``CORS_ALLOWED_ORIGINS`` (a
 # comma-separated list) is concatenated on top so deploy environments can add

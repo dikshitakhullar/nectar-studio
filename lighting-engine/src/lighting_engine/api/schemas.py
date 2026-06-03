@@ -98,11 +98,21 @@ class RoomDims(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RoomSummary(BaseModel):
-    """Lightweight room descriptor returned after upload / on the rooms list."""
+    """Lightweight room descriptor returned after upload / on the rooms list.
+
+    `ceiling_height_m` is `None` until the designer confirms a value via
+    /studio/room-basics. The parser does NOT infer ceiling height from the
+    DXF (RCPs occasionally carry tags, but reliably extracting them is v1.1+);
+    the studio pre-fills its input with the typical residential default and
+    the user accepts or edits. `POST /generate` rejects with 400 if this is
+    still None — per spec §3.3 ceiling_height_m is one of three required
+    fields before plan generation can run.
+    """
     id: str
     name: str
     type: RoomType
     dims: RoomDims
+    ceiling_height_m: float | None = Field(default=None, gt=0)
     polygon: list[Point]
     doors: list[Door]
     windows: list[Window]

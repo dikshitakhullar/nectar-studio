@@ -4,8 +4,9 @@
 .DS_Store
 *.pem
 
-# env files
+# env files (templates ending in .example ARE committed)
 .env*
+!.env*.example
 
 # internal docs (strategy, specs, research) — kept out of git
 /docs/
