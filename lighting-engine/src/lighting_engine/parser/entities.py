@@ -29,6 +29,7 @@ from lighting_engine.models.geometry import (
     Room,
     Window,
 )
+from lighting_engine.parser.door_detection import collect_door_positions
 from lighting_engine.parser.geometry import PlanRegion
 from lighting_engine.parser.layers import LayerRole
 from lighting_engine.parser.window_filter import filter_valid_windows
@@ -227,23 +228,30 @@ def attach_entities(
     furniture_layers = set(layer_roles.get(LayerRole.furniture, []))
     fixture_layers = set(layer_roles.get(LayerRole.fixture, []))
 
-    # ----- DOORS (INSERTs on door layers) -----
-    for e in msp.query("INSERT"):
-        if not isinstance(e, Insert) or e.dxf.layer not in door_layers:
-            continue
-        if not region.contains((float(e.dxf.insert.x), float(e.dxf.insert.y))):
-            summary.skipped_outside_region += 1
-            continue
-        px, py = _to_local_m(
-            float(e.dxf.insert.x), float(e.dxf.insert.y), region, dxf_unit_to_m
-        )
-        idx = attach_room_index(rooms, room_polys, (px, py))
-        wall_idx, along = _snap_to_nearest_wall(rooms[idx], (px, py))
+    # ----- DOORS (INSERT / ARC / LINE-pair / LWPOLYLINE-pair on door layers) -----
+    # See parser/door_detection.py — the architect can draw a door as any of
+    # those four primitives. The collector returns a flat list of `DoorRaw`
+    # records already converted to local meters; we then attach each one to
+    # the room whose polygon contains it (or whose centroid is closest as a
+    # fallback) and snap to that room's nearest wall.
+    raw_doors = collect_door_positions(
+        msp, door_layers, region, dxf_unit_to_m,
+    )
+    for raw in raw_doors:
+        idx = attach_room_index(rooms, room_polys, raw.position)
+        wall_idx, along = _snap_to_nearest_wall(rooms[idx], raw.position)
+        # Width: prefer the arc-derived value (chord = 2 * r * sin(sweep/2),
+        # approximated as r * sqrt(2) for the common 90° swing). Fall back
+        # to a residential default when unknown.
+        if raw.swing_radius_m is not None:
+            width_m = max(raw.swing_radius_m * math.sqrt(2.0), 0.3)
+        else:
+            width_m = 0.9
         door = Door(
             id=f"door-{summary.doors_attached:03d}",
             wall_index=wall_idx,
             along_wall=along,
-            width_m=0.9,           # placeholder; refined in v2
+            width_m=width_m,
             swing=DoorSwing.unknown,
         )
         rooms[idx].doors.append(door)

@@ -170,6 +170,8 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         ".furniture-dot { fill: #b779d4; opacity: 0.7; }"
         ".double-height-poly { fill: url(#double-height-stripes); "
         "stroke: #d94f4f; stroke-width: 1.0; stroke-dasharray: 4,3; }"
+        ".door-arc { stroke: #a8324c; stroke-width: 1.6; fill: none; "
+        "stroke-linecap: round; opacity: 0.95; }"
         "</style>",
     ]
 
@@ -212,6 +214,84 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
                 f'<polygon class="double-height-poly" points="{pts}">'
                 f"<title>double-height ({html.escape(room.name)})</title>"
                 "</polygon>"
+            )
+    parts.append("</g>")
+
+    # Doors — render as small open-arc glyphs above the room fill so they're
+    # visible against the wall they sit on, but below windows / furniture /
+    # fixtures so those stay legible.
+    parts.append('<g class="doors">')
+    for room in project.rooms:
+        for door in room.doors:
+            if door.wall_index is None or door.along_wall is None:
+                continue
+            n_pts = len(room.polygon)
+            if n_pts < 2:
+                continue
+            a = room.polygon[door.wall_index % n_pts]
+            b = room.polygon[(door.wall_index + 1) % n_pts]
+            dx = b.x - a.x
+            dy = b.y - a.y
+            edge_len = (dx * dx + dy * dy) ** 0.5
+            if edge_len <= 0:
+                continue
+            # Door anchor point: along_wall fraction along the wall.
+            cx_m = a.x + door.along_wall * dx
+            cy_m = a.y + door.along_wall * dy
+            # Glyph radius: half the door width, in the local-meter frame.
+            r_m = max(door.width_m / 2.0, 0.25)
+            cx_svg = x(cx_m)
+            cy_svg = y(cy_m)
+            r_svg = r_m * px_per_m
+            # Draw a quarter-arc symbol perpendicular to the wall using SVG
+            # path commands. Endpoint 1 is on the wall (the chord); endpoint
+            # 2 is r_svg into the room. We don't know swing direction yet, so
+            # pick the polygon interior side via signed cross product on the
+            # room centroid.
+            cx_room = sum(p.x for p in room.polygon) / n_pts
+            cy_room = sum(p.y for p in room.polygon) / n_pts
+            # Inward normal: rotate edge dir 90° toward the room centroid.
+            nx_left = -dy / edge_len
+            ny_left = dx / edge_len
+            test_x = cx_m + nx_left
+            test_y = cy_m + ny_left
+            d_left_sq = (test_x - cx_room) ** 2 + (test_y - cy_room) ** 2
+            d_right_sq = (
+                (cx_m - nx_left - cx_room) ** 2
+                + (cy_m - ny_left - cy_room) ** 2
+            )
+            if d_left_sq <= d_right_sq:
+                nx, ny = nx_left, ny_left
+            else:
+                nx, ny = -nx_left, -ny_left
+            # Chord endpoints along the wall around the door anchor (the
+            # door's two jambs at +/- half width along the wall).
+            ux = dx / edge_len
+            uy = dy / edge_len
+            jamb1_x = x(cx_m - r_m * ux)
+            jamb1_y = y(cy_m - r_m * uy)
+            jamb2_x = x(cx_m + r_m * ux)
+            jamb2_y = y(cy_m + r_m * uy)
+            # Swing tip: jamb1 + r perpendicular into the room.
+            tip_x = x(cx_m - r_m * ux + r_m * nx)
+            tip_y = y(cy_m - r_m * uy + r_m * ny)
+            # Two SVG primitives per door: the door-leaf line (jamb1 → tip)
+            # and the swing arc (jamb2 → tip). The arc is a quarter circle
+            # of radius r_svg centred at jamb1.
+            parts.append(
+                f'<line class="door-arc" x1="{jamb1_x:.1f}" y1="{jamb1_y:.1f}" '
+                f'x2="{tip_x:.1f}" y2="{tip_y:.1f}"/>'
+            )
+            parts.append(
+                f'<path class="door-arc" d="M {jamb2_x:.1f} {jamb2_y:.1f} '
+                f'A {r_svg:.1f} {r_svg:.1f} 0 0 0 {tip_x:.1f} {tip_y:.1f}">'
+                f'<title>{html.escape(door.id)} ({html.escape(room.name)})</title>'
+                "</path>"
+            )
+            # Anchor dot for visibility against the wall line.
+            parts.append(
+                f'<circle class="door-arc" cx="{cx_svg:.1f}" cy="{cy_svg:.1f}" '
+                f'r="1.5"/>'
             )
     parts.append("</g>")
 
