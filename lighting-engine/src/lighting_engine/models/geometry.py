@@ -28,6 +28,27 @@ class RoomType(StrEnum):
     unknown = "unknown"
 
 
+class RoomTier(StrEnum):
+    """Whether the room reaches the v1 design flow.
+
+    - `first_class`: gets the full design pipeline (basics → walls → furniture
+      → brief → RCP + furniture plan + lux uniformity). Habitable rooms where
+      the designer's expertise actually moves the needle.
+    - `generic`: shown in the room picker with a `tier: generic` flag.
+      Generation pipeline for these is DEFERRED to v1.1 — v1 only generates
+      for first-class rooms.
+    - `hidden`: filtered out before the picker — toilets, storage, shafts,
+      terraces, courtyards, staircases, balconies. Architects don't pay for
+      lighting design on these in residential.
+
+    Source: spec §3.1.
+    """
+
+    first_class = "first_class"
+    generic = "generic"
+    hidden = "hidden"
+
+
 class DoorSwing(StrEnum):
     in_ = "in"
     out = "out"
@@ -113,6 +134,10 @@ class Room(BaseModel):
     id: str
     name: str
     type: RoomType = RoomType.unknown
+    # v1 picker filter — `hidden` by default so any new room type without an
+    # explicit classification doesn't accidentally hit the design flow.
+    # Populated by `parser/room_tier.classify_room_tier` in the pipeline.
+    tier: RoomTier = Field(default=RoomTier.hidden)
     floor_level: int = 0           # 0 = ground/only floor; positive = upper floors
     polygon: list[Point]
     ceiling_height_m: float = Field(gt=0)

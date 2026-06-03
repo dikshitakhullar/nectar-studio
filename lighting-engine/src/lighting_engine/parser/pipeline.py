@@ -27,6 +27,7 @@ from lighting_engine.parser.gaps import build_gaps_report
 from lighting_engine.parser.geometry import PlanRegion, find_plan_region
 from lighting_engine.parser.layers import LayerRole, classify_layers
 from lighting_engine.parser.loader import load_drawing
+from lighting_engine.parser.room_tier import classify_room_tier
 from lighting_engine.parser.rooms import extract_rooms
 from lighting_engine.parser.snap import Segment, snap_rooms_to_walls
 from lighting_engine.parser.wall_cast import cast_bounding_walls_for_rooms
@@ -190,6 +191,17 @@ def parse_file(
         dxf_unit_to_m=INCH_TO_M,
     )
     rooms = room_result.rooms
+
+    # Classify each room into a v1 design-flow tier (first_class / generic /
+    # hidden) per spec §3.1. The picker only surfaces first_class + generic
+    # rooms; hidden rooms (toilets, storage, terraces) never reach the
+    # designer. Done HERE rather than at the end so downstream passes that
+    # operate per-tier (e.g. future tier-aware wall-cast tweaks) can use
+    # the classification.
+    rooms = [
+        r.model_copy(update={"tier": classify_room_tier(r.type, r.name)})
+        for r in rooms
+    ]
 
     # Wall-cast pass (large-scale translation): for each room polygon, ray-
     # cast in 4 cardinal directions to find its actual bounding walls, then
