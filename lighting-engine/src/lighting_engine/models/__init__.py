@@ -3,7 +3,9 @@ from lighting_engine.models.geometry import (
     Door,
     DoorSwing,
     Fixture,
+    FixtureSource,
     Furniture,
+    LightingLayer,
     Point,
     Project,
     Room,
@@ -12,8 +14,8 @@ from lighting_engine.models.geometry import (
 )
 
 __all__ = [
-    "CeilingFeature", "Door", "DoorSwing", "Fixture", "Furniture",
-    "Point", "Project", "Room", "RoomType", "Window",
+    "CeilingFeature", "Door", "DoorSwing", "Fixture", "FixtureSource",
+    "Furniture", "LightingLayer", "Point", "Project", "Room", "RoomType", "Window",
 ]
 
 from lighting_engine.models.gaps import (

@@ -146,6 +146,8 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         ".room-label { font: 11px ui-sans-serif, system-ui; fill: #1a1a1a; "
         "text-anchor: middle; }"
         ".fixture-dot { fill: #f0c419; stroke: #6b5300; stroke-width: 0.8; }"
+        ".proposed-warm { fill: #ff9a3c; stroke: #8a4500; stroke-width: 0.8; }"
+        ".proposed-cool { fill: #6fc7e6; stroke: #2c5f72; stroke-width: 0.8; }"
         ".furniture-dot { fill: #b779d4; opacity: 0.7; }"
         "</style>",
     ]
@@ -199,14 +201,25 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
             )
     parts.append("</g>")
 
-    # Existing fixtures
+    # Fixtures — render proposed (engine output) and parsed (architect's) as
+    # different colours/sizes. Proposed warm = orange, cool = light blue.
+    from lighting_engine.models.geometry import FixtureSource
     parts.append('<g class="fixtures">')
     for room in project.rooms:
         for fx in room.existing_fixtures:
-            label = html.escape(fx.raw_label or "")
+            label = html.escape(
+                fx.raw_label or f"{fx.source.value} ({fx.cct_k or '?'}K)"
+            )
+            if fx.source == FixtureSource.proposed:
+                css_class = "proposed-cool" if (fx.cct_k or 0) >= 3500 else "proposed-warm"
+                radius = 4
+            else:
+                css_class = "fixture-dot"
+                radius = 5
             parts.append(
-                f'<circle class="fixture-dot" cx="{x(fx.position.x):.1f}" '
-                f'cy="{y(fx.position.y):.1f}" r="5"><title>{label}</title></circle>'
+                f'<circle class="{css_class}" cx="{x(fx.position.x):.1f}" '
+                f'cy="{y(fx.position.y):.1f}" r="{radius}">'
+                f'<title>{label}</title></circle>'
             )
     parts.append("</g>")
 
@@ -221,8 +234,28 @@ def main() -> None:
         "--out", type=Path, default=None,
         help="Output SVG path (default: /tmp/<filename>.svg)",
     )
+    p.add_argument(
+        "--place", action="store_true",
+        help="Also compute and render proposed ambient downlights",
+    )
     args = p.parse_args()
     project, _ = parse_file(args.dxf, project_name=args.dxf.stem)
+
+    if args.place:
+        from lighting_engine.digest import compute_digest
+        from lighting_engine.lighting import compute_ambient_layer
+        digest = compute_digest(project)
+        digest_by_id = {d.room_id: d for d in digest.rooms}
+        proposed_count = 0
+        for room in project.rooms:
+            d = digest_by_id.get(room.id)
+            if d is None:
+                continue
+            for f in compute_ambient_layer(room, d):
+                room.existing_fixtures.append(f)
+                proposed_count += 1
+        print(f"Placed {proposed_count} proposed ambient fixtures.")
+
     out = args.out or Path("/tmp") / f"{args.dxf.stem}.svg"
     render_svg(project=project, dxf_path=args.dxf, output_path=out)
     print(f"Wrote: {out}")
