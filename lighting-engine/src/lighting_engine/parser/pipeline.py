@@ -6,6 +6,8 @@ from pathlib import Path
 from ezdxf.entities.insert import Insert
 from ezdxf.entities.lwpolyline import LWPolyline
 from ezdxf.layouts.layout import Modelspace
+from shapely.geometry import Point as ShapelyPoint
+from shapely.geometry.polygon import Polygon as ShapelyPolygon
 
 from lighting_engine.models.gaps import (
     ExtractionSummary,
@@ -13,7 +15,8 @@ from lighting_engine.models.gaps import (
     MissingItem,
     Severity,
 )
-from lighting_engine.models.geometry import Project
+from lighting_engine.models.geometry import Point, Project, Room
+from lighting_engine.parser.double_height import find_double_height_polygons
 from lighting_engine.parser.entities import attach_entities
 from lighting_engine.parser.gaps import build_gaps_report
 from lighting_engine.parser.geometry import PlanRegion, find_plan_region
@@ -92,6 +95,40 @@ def _segments_to_local_meters(
     return out
 
 
+def _polygon_centroid_local_m(polygon: list[Point]) -> tuple[float, float]:
+    """Cheap centroid: vertex average. Good enough for room-attachment lookup."""
+    n = len(polygon)
+    cx = sum(p.x for p in polygon) / n
+    cy = sum(p.y for p in polygon) / n
+    return cx, cy
+
+
+def _attach_double_height_polygons(
+    rooms: list[Room],
+    dh_polygons: list[list[Point]],
+) -> None:
+    """Attach each double-height polygon to the room whose footprint contains
+    the polygon's centroid (shapely point-in-polygon). Mutates `rooms`.
+
+    Polygons not contained by any room are dropped — they belong to areas the
+    parser didn't recognise as rooms (e.g. courtyards on a dropped duplicate
+    sheet) and we can't sensibly attach them. The pipeline's `print` adds a
+    diagnostic count when run as a script.
+    """
+    if not rooms or not dh_polygons:
+        return
+    room_polys = [
+        ShapelyPolygon([(p.x, p.y) for p in r.polygon]) for r in rooms
+    ]
+    for poly_points in dh_polygons:
+        cx, cy = _polygon_centroid_local_m(poly_points)
+        centroid = ShapelyPoint(cx, cy)
+        for room, room_poly in zip(rooms, room_polys, strict=True):
+            if room_poly.contains(centroid):
+                room.double_height_polygons.append(poly_points)
+                break
+
+
 def parse_file(
     path: Path | str,
     *,
@@ -161,6 +198,14 @@ def parse_file(
     summary = attach_entities(
         msp, rooms, layer_roles, region=region, dxf_unit_to_m=INCH_TO_M,
     )
+
+    # Detect double-height (open-to-below) voids from dotted/dashed linework
+    # and attach each polygon to whichever room's polygon contains its
+    # centroid. Polygons whose centroid sits outside every room (courtyards
+    # without a labelled room, areas on a dropped duplicate sheet) are
+    # silently discarded for v0 — they don't belong to any modelled room.
+    dh_polygons = find_double_height_polygons(doc, region, dxf_unit_to_m=INCH_TO_M)
+    _attach_double_height_polygons(rooms, dh_polygons)
 
     north_found = _has_north_arrow(msp, set(layer_roles.get(LayerRole.north_arrow, [])))
     report = build_gaps_report(

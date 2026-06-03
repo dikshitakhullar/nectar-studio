@@ -121,6 +121,10 @@ class Room(BaseModel):
     furniture: list[Furniture] = []
     ceiling_features: list[CeilingFeature] = []
     existing_fixtures: list[Fixture] = []
+    # Dotted/dashed-line regions inside the room that indicate "open to below"
+    # (double-height / void). Each entry is a closed polygon in the local-meter
+    # frame. Empty for v0 unless the parser's double-height detector finds one.
+    double_height_polygons: list[list[Point]] = Field(default_factory=list[list[Point]])
 
     @field_validator("polygon")
     @classmethod

@@ -139,6 +139,16 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'viewBox="0 0 {svg_w:.1f} {svg_h:.1f}" '
         f'width="{svg_w:.0f}" height="{svg_h:.0f}">',
+        # Diagonal-stripe pattern used to mark double-height (open-to-below)
+        # regions over their host room polygon.
+        '<defs>'
+        '<pattern id="double-height-stripes" patternUnits="userSpaceOnUse" '
+        'width="8" height="8" patternTransform="rotate(45)">'
+        '<rect width="8" height="8" fill="#d94f4f" fill-opacity="0.10"/>'
+        '<line x1="0" y1="0" x2="0" y2="8" stroke="#d94f4f" '
+        'stroke-width="1.5" stroke-opacity="0.55"/>'
+        '</pattern>'
+        '</defs>',
         "<style>"
         ".wall-line { stroke: #6b6b6b; stroke-width: 1.2; }"
         ".window-line { stroke: #1f7ad6; stroke-width: 4.0; stroke-linecap: round; }"
@@ -149,6 +159,8 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
         ".proposed-warm { fill: #ff9a3c; stroke: #8a4500; stroke-width: 0.8; }"
         ".proposed-cool { fill: #6fc7e6; stroke: #2c5f72; stroke-width: 0.8; }"
         ".furniture-dot { fill: #b779d4; opacity: 0.7; }"
+        ".double-height-poly { fill: url(#double-height-stripes); "
+        "stroke: #d94f4f; stroke-width: 1.0; stroke-dasharray: 4,3; }"
         "</style>",
     ]
 
@@ -178,6 +190,20 @@ def render_svg(*, project: Project, dxf_path: Path, output_path: Path) -> None:
             f'<text class="room-label" x="{x(cx):.1f}" y="{y(cy):.1f}">'
             f"{html.escape(label)}</text>"
         )
+    parts.append("</g>")
+
+    # Double-height (open-to-below) regions — drawn AFTER rooms so the
+    # diagonal-stripe overlay sits visibly on top of the room fill, but
+    # BEFORE windows / furniture / fixtures so those stay legible.
+    parts.append('<g class="double-height">')
+    for room in project.rooms:
+        for dh_poly in room.double_height_polygons:
+            pts = " ".join(f"{x(p.x):.1f},{y(p.y):.1f}" for p in dh_poly)
+            parts.append(
+                f'<polygon class="double-height-poly" points="{pts}">'
+                f"<title>double-height ({html.escape(room.name)})</title>"
+                "</polygon>"
+            )
     parts.append("</g>")
 
     # Windows (window/GLASS layer) — drawn AFTER rooms so they stay visible
@@ -240,6 +266,20 @@ def main() -> None:
     )
     args = p.parse_args()
     project, _ = parse_file(args.dxf, project_name=args.dxf.stem)
+
+    # Diagnostic: report which rooms were tagged as having double-height regions
+    # and how many polygons were attached. Useful for verifying the dotted-line
+    # detector on a new fixture without opening the SVG.
+    dh_total = sum(len(r.double_height_polygons) for r in project.rooms)
+    dh_rooms = [
+        (r.name, len(r.double_height_polygons))
+        for r in project.rooms
+        if r.double_height_polygons
+    ]
+    print(f"Double-height polygons attached: {dh_total} across {len(dh_rooms)} room(s)")
+    for name, count in dh_rooms:
+        suffix = "" if count == 1 else f" ({count} polygons)"
+        print(f"  - {name}{suffix}")
 
     if args.place:
         from lighting_engine.digest import compute_digest
