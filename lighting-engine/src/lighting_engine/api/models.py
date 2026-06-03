@@ -14,7 +14,7 @@ defaults so they show up in any logs the studio surfaces.
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, Text
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -64,9 +64,14 @@ class Project(Base):
 class RoomRecord(Base):
     __tablename__ = "rooms"
 
+    # Composite primary key: a parser-derived slug like "drawing-room-00" is
+    # only unique within ONE project — across projects, two designers' Delhi
+    # houses can both have a "drawing-room-00". The composite key lets the
+    # API give every project its own id namespace without re-slugifying.
     id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True, index=True,
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     # JSON blob: ConfirmedRoom (parsed-IR view + any clarification deltas).
@@ -87,14 +92,22 @@ class RoomRecord(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # Composite FK back to (rooms.project_id, rooms.id) since rooms now has a
+    # composite PK. Project_id is kept as its own simple FK to projects too
+    # so deletes cascade cleanly.
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "room_id"],
+            ["rooms.project_id", "rooms.id"],
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True,
     )
-    room_id: Mapped[str] = mapped_column(
-        ForeignKey("rooms.id", ondelete="CASCADE"), nullable=False, index=True,
-    )
+    room_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Full PlanResponse blob once status == "done".
@@ -108,4 +121,9 @@ class Job(Base):
     )
 
     project: Mapped[Project] = relationship(back_populates="jobs")
-    room: Mapped[RoomRecord] = relationship(back_populates="jobs")
+    # The room relationship shares project_id with the project relationship
+    # (composite FK on rooms (project_id, id)); declare the overlap so
+    # SQLAlchemy knows it's intentional rather than a misconfiguration.
+    room: Mapped[RoomRecord] = relationship(
+        back_populates="jobs", overlaps="jobs,project",
+    )

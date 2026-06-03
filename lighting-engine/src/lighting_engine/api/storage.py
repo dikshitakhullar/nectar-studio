@@ -84,10 +84,12 @@ async def list_rooms(session: AsyncSession, project_id: str) -> list[RoomRecord]
 async def get_room(
     session: AsyncSession, project_id: str, room_id: str,
 ) -> RoomRecord | None:
-    room = await session.get(RoomRecord, room_id)
-    if room is None or room.project_id != project_id:
-        return None
-    return room
+    """Fetch a room by its composite primary key.
+
+    `RoomRecord` declares `id` first then `project_id` as primary-key columns,
+    so `session.get` expects a tuple in that order.
+    """
+    return await session.get(RoomRecord, (room_id, project_id))
 
 
 async def update_room_confirmed(
