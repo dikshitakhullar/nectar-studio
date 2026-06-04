@@ -65,3 +65,52 @@ def test_post_project_with_furniture_optional(client: TestClient) -> None:
             files={"ceiling": ("ceiling.dxf", fh, "application/dxf")},
         )
     assert resp.status_code == 201, resp.text
+
+
+def test_post_project_with_furniture_populates_furniture_parsed(
+    client: TestClient,
+) -> None:
+    """Uploading the same architectural DXF as BOTH ceiling and furniture
+    exercises the furniture-merge integration end-to-end.
+
+    The architectural file contains FURNITURE-layer INSERTs (per the Delhi
+    fixture); when merged in via the new pipeline step, at least one
+    confirmed room should come back with non-empty ``furniture_parsed``.
+    Skipped when the fixture isn't present (matching the rest of this file's
+    real-DXF tests).
+    """
+    if not _FIXTURE.exists():
+        pytest.skip("Delhi fixture not present")
+    with _FIXTURE.open("rb") as ceiling_fh, _FIXTURE.open("rb") as furniture_fh:
+        resp = client.post(
+            "/api/projects",
+            files={
+                "ceiling": ("ceiling.dxf", ceiling_fh, "application/dxf"),
+                "furniture": ("furniture.dxf", furniture_fh, "application/dxf"),
+            },
+            data={"project_name": "Test furniture-merge"},
+        )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    pid: str = body["project_id"]
+    assert body["rooms"], "expected at least one parsed room"
+
+    # Walk the rooms via the dedicated endpoint and look for furniture_parsed.
+    # We don't assert on every room — just that *some* room received furniture.
+    total_furniture = 0
+    rooms_with_furniture = 0
+    for room_summary in body["rooms"]:
+        rid: str = room_summary["id"]
+        r = client.get(f"/api/projects/{pid}/rooms/{rid}")
+        assert r.status_code == 200, r.text
+        confirmed = r.json()
+        furn = confirmed.get("furniture_parsed", [])
+        total_furniture += len(furn)
+        if furn:
+            rooms_with_furniture += 1
+
+    assert total_furniture >= 1, (
+        f"expected the furniture merge to attach at least 1 piece across rooms; "
+        f"got {total_furniture} (rooms checked: {len(body['rooms'])})"
+    )
+    assert rooms_with_furniture >= 1

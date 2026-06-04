@@ -27,6 +27,7 @@ from lighting_engine.api.storage import (
     get_project,
     list_rooms,
 )
+from lighting_engine.parser.furniture_merge import merge_furniture_from_file
 from lighting_engine.parser.pipeline import parse_file
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -98,6 +99,40 @@ async def create_project_endpoint(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Could not parse ceiling file: {exc}",
         ) from exc
+
+    # Merge furniture from the separate furniture file (Phase 3 — the v1.0.2
+    # gap). Failure here is non-fatal: a corrupt furniture file shouldn't
+    # block the upload; the studio can still drive the design flow with
+    # parser-only data. We log the report so deploys can audit registration
+    # quality without surfacing it to the user yet (v1.1 wires a warning).
+    if furniture_path is not None:
+        try:
+            project, merge_report = merge_furniture_from_file(
+                project, furniture_path,
+            )
+            # Structured logger lands in a later phase; print() is the
+            # placeholder so deploys can grep for the event in stdout.
+            print(
+                {
+                    "event": "furniture_merge",
+                    "project_id": project_id,
+                    "furniture_seen": merge_report.furniture_seen,
+                    "furniture_attached": merge_report.furniture_attached,
+                    "dropped_outside_rooms": (
+                        merge_report.dropped_outside_rooms
+                    ),
+                    "offset_applied_m": merge_report.offset_applied_m,
+                    "inlier_ratio": merge_report.inlier_ratio,
+                }
+            )
+        except Exception as exc:
+            print(
+                {
+                    "event": "furniture_merge_failed",
+                    "project_id": project_id,
+                    "error": repr(exc),
+                }
+            )
 
     # Override the parser-assigned project id with the one we generated so the
     # FK relationships line up.
