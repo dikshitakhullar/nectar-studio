@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type FurnitureMarker, RoomMiniMap } from "../components/RoomMiniMap";
+import {
+  type DoorMarker,
+  type FurnitureMarker,
+  RoomMiniMap,
+  type WindowMarker,
+} from "../components/RoomMiniMap";
 import { StepNav } from "../components/StepNav";
 import { ErrorBanner, OptionGroup, Spinner } from "../components/UIPrimitives";
-import { ApiError, getRoom, postRoomBasics } from "@/lib/api/client";
+import { ApiError, getRoom, listRooms, postRoomBasics } from "@/lib/api/client";
 import type {
   CeilingType,
   ConfirmedRoom,
@@ -92,6 +97,8 @@ export default function RoomBasicsPage() {
   const { pid, rid } = readStudioIds(searchParams);
 
   const [room, setRoom] = useState<ConfirmedRoom | null>(null);
+  /** id → name map used to label door destinations in the mini-map tooltip. */
+  const [roomNameById, setRoomNameById] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -125,6 +132,41 @@ export default function RoomBasicsPage() {
     }));
   }, [room?.furniture_parsed]);
 
+  // Door + window markers — pulled from the parser's doors_parsed /
+  // windows_parsed lists. Skip doors / windows that have no wall_index
+  // (parser couldn't snap them to a specific polygon edge — rare).
+  const doorMarkers: DoorMarker[] = useMemo(() => {
+    const items = room?.doors_parsed ?? [];
+    return items.flatMap((d) =>
+      d.wall_index === null || d.wall_index === undefined ||
+      d.along_wall === null || d.along_wall === undefined
+        ? []
+        : [{
+            wallIndex: d.wall_index,
+            alongWall: d.along_wall,
+            widthM: d.width_m,
+            destinationLabel: d.destination_room_id
+              ? (roomNameById[d.destination_room_id] ?? undefined)
+              : undefined,
+          }],
+    );
+  }, [room?.doors_parsed, roomNameById]);
+
+  const windowMarkers: WindowMarker[] = useMemo(() => {
+    const items = room?.windows_parsed ?? [];
+    return items.flatMap((w) =>
+      w.wall_index === null || w.wall_index === undefined ||
+      w.along_wall === null || w.along_wall === undefined
+        ? []
+        : [{
+            wallIndex: w.wall_index,
+            alongWall: w.along_wall,
+            widthM: w.width_m,
+            isDoorWindow: w.is_glazed_door,
+          }],
+    );
+  }, [room?.windows_parsed]);
+
   // Default wall labels (A, B, C, …) — only used so RoomMiniMap renders
   // its wall letters; this screen doesn't drive wall selection.
   const wallLabels = useMemo<string[]>(() => {
@@ -141,8 +183,14 @@ export default function RoomBasicsPage() {
     }
     setError(null);
     try {
-      const r = await getRoom(pid, rid);
+      const [r, rooms] = await Promise.all([
+        getRoom(pid, rid),
+        listRooms(pid),
+      ]);
       setRoom(r);
+      setRoomNameById(
+        Object.fromEntries(rooms.rooms.map((rm) => [rm.id, rm.name])),
+      );
       setTypeConfirmed(r.type_confirmed ?? r.type_inferred);
       // The /room endpoint returns ConfirmedRoom which doesn't carry RoomDims;
       // pre-fill from the polygon bounding box when the user hasn't typed
@@ -321,6 +369,8 @@ export default function RoomBasicsPage() {
               /* room-basics doesn't drive wall selection */
             }}
             furniture={furnitureMarkers}
+            doors={doorMarkers}
+            windows={windowMarkers}
           />
           <p className="text-xs text-stone-500 pt-2">
             Detected polygon and furniture from your plan. Confirm dimensions

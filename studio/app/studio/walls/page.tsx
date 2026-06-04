@@ -4,10 +4,20 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StepNav } from "../components/StepNav";
-import { RoomMiniMap } from "../components/RoomMiniMap";
+import {
+  type DoorMarker,
+  RoomMiniMap,
+  type WindowMarker,
+} from "../components/RoomMiniMap";
 import { ErrorBanner, Spinner } from "../components/UIPrimitives";
 import { ApiError, getRoom, getWalls, listRooms, postWall } from "@/lib/api/client";
-import type { Point, RoomSummary, WallConfirmation } from "@/lib/api/types";
+import type {
+  Door,
+  Point,
+  RoomSummary,
+  WallConfirmation,
+  Window as ApiWindow,
+} from "@/lib/api/types";
 import { buildStudioQuery, readStudioIds } from "@/lib/api/url-state";
 import { formatDim } from "@/lib/format/dimensions";
 
@@ -122,6 +132,12 @@ export default function WallsPage() {
   const [polygon, setPolygon] = useState<Point[] | null>(null);
   const [walls, setWalls] = useState<WallState[] | null>(null);
   const [otherRooms, setOtherRooms] = useState<RoomSummary[]>([]);
+  /** Parsed doors / windows from the /room endpoint — used to render the
+   * door arcs + window symbols on the mini-map AND to pre-fill per-wall
+   * defaults. Kept separate from the WallConfirmation list because the
+   * latter is the user-editable state, while this is the parser snapshot. */
+  const [parsedDoors, setParsedDoors] = useState<Door[]>([]);
+  const [parsedWindows, setParsedWindows] = useState<ApiWindow[]>([]);
   const [activeWallIndex, setActiveWallIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -141,6 +157,8 @@ export default function WallsPage() {
         listRooms(pid),
       ]);
       setPolygon(room.polygon_inferred);
+      setParsedDoors(room.doors_parsed ?? []);
+      setParsedWindows(room.windows_parsed ?? []);
       const hydrated: WallState[] = wallsResult.walls.map((w) => {
         const { extras, notes } = unpackNotes(w.notes);
         return { ...w, extras, userNotes: notes };
@@ -223,6 +241,44 @@ export default function WallsPage() {
     [walls],
   );
 
+  // Lookup so the door tooltip can show "Door (leads to Kitchen)" rather than
+  // the raw room id. Built from `otherRooms` because every destination is by
+  // definition not the current room.
+  const otherRoomNameById = useMemo(
+    () => Object.fromEntries(otherRooms.map((r) => [r.id, r.name])),
+    [otherRooms],
+  );
+
+  const doorMarkers: DoorMarker[] = useMemo(() => {
+    return parsedDoors.flatMap((d) =>
+      d.wall_index === null || d.wall_index === undefined ||
+      d.along_wall === null || d.along_wall === undefined
+        ? []
+        : [{
+            wallIndex: d.wall_index,
+            alongWall: d.along_wall,
+            widthM: d.width_m,
+            destinationLabel: d.destination_room_id
+              ? (otherRoomNameById[d.destination_room_id] ?? undefined)
+              : undefined,
+          }],
+    );
+  }, [parsedDoors, otherRoomNameById]);
+
+  const windowMarkers: WindowMarker[] = useMemo(() => {
+    return parsedWindows.flatMap((w) =>
+      w.wall_index === null || w.wall_index === undefined ||
+      w.along_wall === null || w.along_wall === undefined
+        ? []
+        : [{
+            wallIndex: w.wall_index,
+            alongWall: w.along_wall,
+            widthM: w.width_m,
+            isDoorWindow: w.is_glazed_door,
+          }],
+    );
+  }, [parsedWindows]);
+
   if (!pid || !rid) {
     return (
       <div className="space-y-6">
@@ -263,6 +319,8 @@ export default function WallsPage() {
               activeWallIndex={activeWallIndex}
               wallLabels={wallLabels}
               onSelectWall={onSelectWall}
+              doors={doorMarkers}
+              windows={windowMarkers}
             />
             <p className="text-xs text-stone-500 text-center">
               Tap a wall on the map to edit

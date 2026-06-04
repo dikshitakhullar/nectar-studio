@@ -54,6 +54,9 @@ export interface Door {
   width_m: number;
   height_m?: number;
   swing?: DoorSwing;
+  /** Id of the room on the other side of the wall (parser inference).
+   * `null`/undefined for exterior doors. */
+  destination_room_id?: string | null;
 }
 
 export interface Window {
