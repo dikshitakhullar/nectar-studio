@@ -17,6 +17,7 @@ from lighting_engine.models.gaps import (
 )
 from lighting_engine.models.geometry import Point, Project, Room
 from lighting_engine.parser.door_anchor import anchor_polygons_to_doors
+from lighting_engine.parser.door_destinations import infer_door_destinations
 from lighting_engine.parser.door_detection import collect_door_positions
 from lighting_engine.parser.double_height import (
     collect_non_continuous_segments,
@@ -270,6 +271,13 @@ def parse_file(
     # silently discarded for v0 — they don't belong to any modelled room.
     dh_polygons = find_double_height_polygons(doc, region, dxf_unit_to_m=INCH_TO_M)
     _attach_double_height_polygons(rooms, dh_polygons)
+
+    # Door destination inference: for each door, find the room sitting on the
+    # OTHER side of the wall it's mounted on and stamp that as the door's
+    # destination_room_id. Doors on exterior walls (balconies, main entrance)
+    # leave the field as None. Must run AFTER attach_entities so doors have
+    # valid wall_index + along_wall.
+    infer_door_destinations(rooms)
 
     north_found = _has_north_arrow(msp, set(layer_roles.get(LayerRole.north_arrow, [])))
     report = build_gaps_report(

@@ -75,6 +75,11 @@ class Door(BaseModel):
     width_m: float = Field(gt=0)
     height_m: float = Field(gt=0, default=2.1)
     swing: DoorSwing = DoorSwing.unknown
+    # ID of the room on the OTHER side of the wall this door sits on, when the
+    # parser can infer it (door-destination inference, see
+    # `parser/door_destinations.py`). `None` for exterior doors (balcony /
+    # entrance) where there's no adjacent room polygon to anchor to.
+    destination_room_id: str | None = None
 
 
 class Furniture(BaseModel):
