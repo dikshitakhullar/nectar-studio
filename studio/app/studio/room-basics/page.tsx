@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FurnitureMarker, RoomMiniMap } from "../components/RoomMiniMap";
 import { StepNav } from "../components/StepNav";
 import { ErrorBanner, OptionGroup, Spinner } from "../components/UIPrimitives";
 import { ApiError, getRoom, postRoomBasics } from "@/lib/api/client";
@@ -11,11 +12,20 @@ import type {
   ConfirmedRoom,
   Direction,
   FinishTone,
+  Furniture,
   Occupant,
   Point,
   RoomType,
 } from "@/lib/api/types";
 import { formatDim, parseDim } from "@/lib/format/dimensions";
+
+/** Build a furniture marker label from a parser Furniture record. */
+function markerLabel(f: Furniture): string {
+  const type = f.type && f.type !== "unknown" ? f.type : "furniture";
+  return f.raw_label && f.raw_label.length > 0
+    ? `${type} — ${f.raw_label}`
+    : type;
+}
 
 /** Bounding-box dims of a polygon — used as a default for length/width if the
  * user hasn't typed values yet. The /room endpoint doesn't carry dims directly. */
@@ -102,6 +112,27 @@ export default function RoomBasicsPage() {
   const [occupants, setOccupants] = useState<Occupant[]>([]);
   const [floorFinish, setFloorFinish] = useState<FinishTone | null>(null);
   const [wallFinish, setWallFinish] = useState<FinishTone | null>(null);
+
+  // Furniture markers for the inline mini-map. Derived from the loaded
+  // ConfirmedRoom.furniture_parsed (populated by the Phase B furniture-merge
+  // integration). Memoised so changes to other form state don't churn the
+  // markers array reference.
+  const furnitureMarkers: FurnitureMarker[] = useMemo(() => {
+    const items = room?.furniture_parsed ?? [];
+    return items.map((f) => ({
+      position: f.position,
+      label: markerLabel(f),
+    }));
+  }, [room?.furniture_parsed]);
+
+  // Default wall labels (A, B, C, …) — only used so RoomMiniMap renders
+  // its wall letters; this screen doesn't drive wall selection.
+  const wallLabels = useMemo<string[]>(() => {
+    const n = room?.polygon_inferred.length ?? 0;
+    return Array.from({ length: n }, (_, i) =>
+      String.fromCharCode(65 + (i % 26)),
+    );
+  }, [room?.polygon_inferred.length]);
 
   const load = useCallback(async () => {
     if (!pid || !rid) {
@@ -279,6 +310,24 @@ export default function RoomBasicsPage() {
           Confirm room type, dimensions, ceiling, orientation, and finishes.
         </p>
       </div>
+
+      {room && room.polygon_inferred.length >= 3 && (
+        <div className="flex items-start gap-4">
+          <RoomMiniMap
+            polygon={room.polygon_inferred}
+            activeWallIndex={null}
+            wallLabels={wallLabels}
+            onSelectWall={() => {
+              /* room-basics doesn't drive wall selection */
+            }}
+            furniture={furnitureMarkers}
+          />
+          <p className="text-xs text-stone-500 pt-2">
+            Detected polygon and furniture from your plan. Confirm dimensions
+            below if anything looks off.
+          </p>
+        </div>
+      )}
 
       {error && <ErrorBanner message={error} onRetry={load} />}
 

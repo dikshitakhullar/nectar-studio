@@ -11,6 +11,18 @@ const COLOR_STROKE = "#a8a29e"; // stone-400
 const COLOR_STROKE_ACTIVE = "#b45309"; // amber-700
 const COLOR_FILL = "#fef3c7"; // amber-100
 const COLOR_LABEL = "#44403c"; // stone-700
+const COLOR_FURNITURE = "#78350f"; // amber-900 — high-contrast on amber-100 fill
+
+/** Optional furniture marker rendered as a dot on the polygon.
+ *
+ * Coordinates are in the same local-meter frame as `polygon` (the parser's
+ * region-shifted frame). Each entry gets a small filled circle with an
+ * SVG `<title>` for hover tooltips.
+ */
+export interface FurnitureMarker {
+  position: Point;
+  label: string;
+}
 
 export interface RoomMiniMapProps {
   polygon: Point[];
@@ -19,6 +31,8 @@ export interface RoomMiniMapProps {
   /** Letter labels for each wall, indexed by wall index. */
   wallLabels: string[];
   onSelectWall: (index: number) => void;
+  /** Optional furniture dots overlaid on the polygon. */
+  furniture?: FurnitureMarker[];
 }
 
 interface ProjectedPoint {
@@ -40,6 +54,7 @@ export function RoomMiniMap({
   activeWallIndex,
   wallLabels,
   onSelectWall,
+  furniture,
 }: RoomMiniMapProps) {
   if (polygon.length < 3) {
     return (
@@ -49,8 +64,13 @@ export function RoomMiniMap({
     );
   }
 
-  const { projected, viewBox } = projectPolygon(polygon, SVG_SIZE, PADDING_RATIO);
+  const { projected, viewBox, projectPoint } = projectPolygon(
+    polygon, SVG_SIZE, PADDING_RATIO,
+  );
   const polylinePoints = projected.map((p) => `${p.x},${p.y}`).join(" ");
+  // Furniture dots reuse the same projection function used for the polygon
+  // so the markers land on the right spot regardless of the polygon's bbox.
+  const furnitureMarkers = furniture ?? [];
 
   return (
     <svg
@@ -151,6 +171,26 @@ export function RoomMiniMap({
           </g>
         );
       })}
+
+      {/* furniture dots — small filled circles with title tooltips.
+          Rendered AFTER the walls so they sit on top visually. */}
+      {furnitureMarkers.map((f, i) => {
+        const p = projectPoint(f.position);
+        return (
+          <g key={`furn-${i}`}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r={SVG_SIZE * 0.018}
+              fill={COLOR_FURNITURE}
+              stroke="#ffffff"
+              strokeWidth={1}
+            >
+              <title>{f.label}</title>
+            </circle>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -159,12 +199,20 @@ export function RoomMiniMap({
  *
  * The DXF coordinate system has y-up; SVG has y-down, so we flip y to keep
  * north visually pointing up.
+ *
+ * Also returns a `projectPoint` closure so additional overlays (furniture
+ * dots, doors, etc.) can land in the same projected frame as the polygon
+ * without recomputing the bbox/scale.
  */
 function projectPolygon(
   polygon: Point[],
   size: number,
   paddingRatio: number,
-): { projected: ProjectedPoint[]; viewBox: string } {
+): {
+  projected: ProjectedPoint[];
+  viewBox: string;
+  projectPoint: (p: Point) => ProjectedPoint;
+} {
   let minX = polygon[0].x;
   let maxX = polygon[0].x;
   let minY = polygon[0].y;
@@ -183,11 +231,12 @@ function projectPolygon(
   const scale = Math.min(drawW / w, drawH / h);
   const offsetX = pad + (drawW - w * scale) / 2;
   const offsetY = pad + (drawH - h * scale) / 2;
-  const projected: ProjectedPoint[] = polygon.map((p) => ({
+  const projectPoint = (p: Point): ProjectedPoint => ({
     x: offsetX + (p.x - minX) * scale,
     // flip y: bigger source y → higher visually (smaller SVG y)
     y: size - (offsetY + (p.y - minY) * scale),
-  }));
+  });
+  const projected: ProjectedPoint[] = polygon.map(projectPoint);
   const viewBox = `0 0 ${size} ${size}`;
-  return { projected, viewBox };
+  return { projected, viewBox, projectPoint };
 }
