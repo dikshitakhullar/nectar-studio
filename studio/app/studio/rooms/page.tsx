@@ -8,6 +8,7 @@ import { ErrorBanner, Spinner } from "../components/UIPrimitives";
 import { ApiError, listRooms } from "@/lib/api/client";
 import type { RoomSummary } from "@/lib/api/types";
 import { buildStudioQuery, readStudioIds } from "@/lib/api/url-state";
+import { formatDim } from "@/lib/format/dimensions";
 
 const ROOM_TYPE_LABELS: Record<string, string> = {
   living: "Living",
@@ -105,7 +106,7 @@ export default function RoomsPage() {
           </div>
           <div className="space-y-2">
             {rooms.map((room) => {
-              const dims = `${room.dims.length_m.toFixed(2)} × ${room.dims.width_m.toFixed(2)} m`;
+              const dims = `${formatDim(room.dims.length_m)} × ${formatDim(room.dims.width_m)}`;
               const typeLabel = ROOM_TYPE_LABELS[room.type] ?? room.type;
               const statusLabel = STATUS_LABELS[room.status ?? "new"] ?? room.status ?? "Not started";
               return (

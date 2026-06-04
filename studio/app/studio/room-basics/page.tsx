@@ -15,6 +15,7 @@ import type {
   Point,
   RoomType,
 } from "@/lib/api/types";
+import { formatDim, parseDim } from "@/lib/format/dimensions";
 
 /** Bounding-box dims of a polygon — used as a default for length/width if the
  * user hasn't typed values yet. The /room endpoint doesn't carry dims directly. */
@@ -86,9 +87,16 @@ export default function RoomBasicsPage() {
 
   // Local form state — initialised from the fetched ConfirmedRoom.
   const [typeConfirmed, setTypeConfirmed] = useState<RoomType | null>(null);
-  const [lengthM, setLengthM] = useState<string>("");
-  const [widthM, setWidthM] = useState<string>("");
-  const [ceilingHeightM, setCeilingHeightM] = useState<string>("");
+  // Dimension inputs accept feet OR meters (e.g. "12'-6\"", "3.8m", or bare
+  // "3.8" assumed meters). String state captures whatever the user typed; on
+  // blur it's reformatted to the canonical "X.Xm (XX'-Y\")" via parseDim +
+  // formatDim. The parsed numeric value is what we POST.
+  const [lengthInput, setLengthInput] = useState<string>("");
+  const [widthInput, setWidthInput] = useState<string>("");
+  const [ceilingHeightInput, setCeilingHeightInput] = useState<string>("");
+  const [lengthErr, setLengthErr] = useState(false);
+  const [widthErr, setWidthErr] = useState(false);
+  const [ceilingHeightErr, setCeilingHeightErr] = useState(false);
   const [ceilingType, setCeilingType] = useState<CeilingType | null>(null);
   const [orientation, setOrientation] = useState<Direction | null>(null);
   const [occupants, setOccupants] = useState<Occupant[]>([]);
@@ -109,21 +117,25 @@ export default function RoomBasicsPage() {
       // pre-fill from the polygon bounding box when the user hasn't typed
       // a value yet. We round to 2 decimals so the input doesn't look noisy.
       const dims = polygonDims(r.polygon_inferred);
-      setLengthM(
+      const initialLength =
         r.length_m !== null && r.length_m !== undefined
-          ? String(r.length_m)
-          : dims.length > 0 ? dims.length.toFixed(2) : "",
-      );
-      setWidthM(
+          ? r.length_m
+          : dims.length > 0
+            ? dims.length
+            : null;
+      const initialWidth =
         r.width_m !== null && r.width_m !== undefined
-          ? String(r.width_m)
-          : dims.width > 0 ? dims.width.toFixed(2) : "",
-      );
-      setCeilingHeightM(
+          ? r.width_m
+          : dims.width > 0
+            ? dims.width
+            : null;
+      const initialCeiling =
         r.ceiling_height_m !== null && r.ceiling_height_m !== undefined
-          ? String(r.ceiling_height_m)
-          : String(DEFAULT_CEILING_HEIGHT_M),
-      );
+          ? r.ceiling_height_m
+          : DEFAULT_CEILING_HEIGHT_M;
+      setLengthInput(initialLength !== null ? formatDim(initialLength) : "");
+      setWidthInput(initialWidth !== null ? formatDim(initialWidth) : "");
+      setCeilingHeightInput(formatDim(initialCeiling));
       setCeilingType(r.ceiling_type ?? "flat");
       setOrientation(r.main_window_orientation ?? null);
       setOccupants(r.occupants ?? []);
@@ -144,17 +156,66 @@ export default function RoomBasicsPage() {
     void load();
   }, [load]);
 
+  /** Pull meters out of either a canonical "X.Xm (Y'-Z\")" display or any
+   * parseDim-accepted format. Returns null for empty/unparseable input. */
+  const inputToMeters = (input: string): number | null => {
+    const trimmed = input.trim();
+    if (trimmed.length === 0) return null;
+    // Canonical display "4.2m (13'-9½\")" — take the meters part before " (".
+    const canonical = trimmed.match(/^([+-]?\d+(?:\.\d+)?)\s*m\b/i);
+    if (canonical) {
+      const v = Number(canonical[1]);
+      return Number.isFinite(v) ? v : null;
+    }
+    return parseDim(trimmed);
+  };
+
+  const onDimBlur = (
+    raw: string,
+    setInput: (s: string) => void,
+    setErr: (b: boolean) => void,
+  ) => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      setErr(false);
+      return;
+    }
+    const meters = inputToMeters(trimmed);
+    if (meters === null || meters <= 0) {
+      setErr(true);
+      return;
+    }
+    setErr(false);
+    setInput(formatDim(meters));
+  };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pid || !rid) return;
+    const lengthM = inputToMeters(lengthInput);
+    const widthM = inputToMeters(widthInput);
+    const ceilingHeightM = inputToMeters(ceilingHeightInput);
+    // Reject submission if anything entered fails to parse.
+    if (lengthInput.trim() !== "" && lengthM === null) {
+      setLengthErr(true);
+      return;
+    }
+    if (widthInput.trim() !== "" && widthM === null) {
+      setWidthErr(true);
+      return;
+    }
+    if (ceilingHeightInput.trim() !== "" && ceilingHeightM === null) {
+      setCeilingHeightErr(true);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       await postRoomBasics(pid, rid, {
         type_confirmed: typeConfirmed,
-        length_m: lengthM ? Number(lengthM) : null,
-        width_m: widthM ? Number(widthM) : null,
-        ceiling_height_m: ceilingHeightM ? Number(ceilingHeightM) : null,
+        length_m: lengthM,
+        width_m: widthM,
+        ceiling_height_m: ceilingHeightM,
         ceiling_type: ceilingType,
         main_window_orientation: orientation,
         occupants: occupants.length > 0 ? occupants : null,
@@ -232,41 +293,79 @@ export default function RoomBasicsPage() {
         </section>
 
         <section className="space-y-3">
-          <div className="text-xs uppercase tracking-wider text-amber-700/90">Dimensions (m)</div>
+          <div className="text-xs uppercase tracking-wider text-amber-700/90">Dimensions</div>
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
               <div className="text-xs text-stone-500 mb-1">Length</div>
               <input
-                type="number"
-                step="0.01"
-                value={lengthM}
-                onChange={(e) => setLengthM(e.target.value)}
-                className="w-full bg-white border border-stone-200 rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none"
+                type="text"
+                inputMode="text"
+                value={lengthInput}
+                onChange={(e) => {
+                  setLengthInput(e.target.value);
+                  if (lengthErr) setLengthErr(false);
+                }}
+                onBlur={(e) => onDimBlur(e.target.value, setLengthInput, setLengthErr)}
+                className={`w-full bg-white border rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none ${
+                  lengthErr ? "border-red-400" : "border-stone-200"
+                }`}
               />
+              {lengthErr && (
+                <div className="text-[11px] text-red-700 mt-1">
+                  Couldn&apos;t parse — try &quot;3.8m&quot; or &quot;12&apos;-6&quot;&quot;.
+                </div>
+              )}
             </label>
             <label className="block">
               <div className="text-xs text-stone-500 mb-1">Width</div>
               <input
-                type="number"
-                step="0.01"
-                value={widthM}
-                onChange={(e) => setWidthM(e.target.value)}
-                className="w-full bg-white border border-stone-200 rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none"
+                type="text"
+                inputMode="text"
+                value={widthInput}
+                onChange={(e) => {
+                  setWidthInput(e.target.value);
+                  if (widthErr) setWidthErr(false);
+                }}
+                onBlur={(e) => onDimBlur(e.target.value, setWidthInput, setWidthErr)}
+                className={`w-full bg-white border rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none ${
+                  widthErr ? "border-red-400" : "border-stone-200"
+                }`}
               />
+              {widthErr && (
+                <div className="text-[11px] text-red-700 mt-1">
+                  Couldn&apos;t parse — try &quot;3.8m&quot; or &quot;12&apos;-6&quot;&quot;.
+                </div>
+              )}
             </label>
             <label className="block">
               <div className="text-xs text-stone-500 mb-1">Ceiling height</div>
               <input
-                type="number"
-                step="0.01"
-                value={ceilingHeightM}
-                onChange={(e) => setCeilingHeightM(e.target.value)}
-                className="w-full bg-white border border-stone-200 rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none"
+                type="text"
+                inputMode="text"
+                value={ceilingHeightInput}
+                onChange={(e) => {
+                  setCeilingHeightInput(e.target.value);
+                  if (ceilingHeightErr) setCeilingHeightErr(false);
+                }}
+                onBlur={(e) =>
+                  onDimBlur(e.target.value, setCeilingHeightInput, setCeilingHeightErr)
+                }
+                className={`w-full bg-white border rounded-md px-3 py-2 text-sm text-stone-900 focus:border-stone-400 outline-none ${
+                  ceilingHeightErr ? "border-red-400" : "border-stone-200"
+                }`}
               />
+              {ceilingHeightErr && (
+                <div className="text-[11px] text-red-700 mt-1">
+                  Couldn&apos;t parse — try &quot;2.8m&quot; or &quot;9&apos;-0&quot;&quot;.
+                </div>
+              )}
             </label>
           </div>
           <p className="text-xs text-stone-500">
-            Length and width come from the parsed polygon. Ceiling height defaults to {DEFAULT_CEILING_HEIGHT_M} m — edit if your project differs.
+            Enter in feet or meters — e.g. <span className="text-stone-700">3.8m</span>{" "}
+            or <span className="text-stone-700">12&apos;-6&quot;</span>. Values are
+            stored in meters and reformatted on blur. Ceiling height defaults to{" "}
+            {formatDim(DEFAULT_CEILING_HEIGHT_M)}.
           </p>
         </section>
 
