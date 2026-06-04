@@ -1,7 +1,12 @@
 """Accent-layer placement: wash a wall, spot a feature, light an architectural detail.
 
 For a "strip" TargetRegion (wall-aligned), place wall washers evenly along
-the strip at ~0.8m spacing. For a "point" target, place a single spotlight.
+the strip at ~1.5m spacing, capped at 3 per wall. Walls with windows or
+doors skip wall-washer placement entirely (washes belong on solid feature
+walls, not over openings). For a "point" target, place a single spotlight.
+
+These are v1 residential heuristics. A real designer picks spacing from the
+fixture's beam spread + the specific feature being lit; v2 brings that in.
 """
 
 from lighting_engine.brief.models import Zone
@@ -15,10 +20,15 @@ from lighting_engine.models.geometry import (
     Room,
 )
 
-# Target spacing between wall washers along a wall strip. Real installations
-# pick exact spacing from the SKU's beam spread; 0.8m gives an even wash for
-# 24°-beam track-style washers on a 2.7m ceiling.
-_ACCENT_SPACING_M = 0.8
+# Spacing between wall washers along a wall strip. 1.5m matches residential
+# practice — closer than that on a typical 2.7m ceiling looks commercial /
+# gallery-style. v2 will pick spacing from the fixture's beam spread.
+_ACCENT_SPACING_M = 1.5
+
+# Hard cap on wall washers per wall. Residential walls almost never need
+# more than 3 grazers; beyond that it reads as continuous wash, which is a
+# different design intent (cove, not accent).
+_MAX_GRAZERS_PER_WALL = 3
 
 # Photometric defaults for accent fixtures (single-archetype v1).
 _ACCENT_WATTAGE_W = 7.0
@@ -26,10 +36,45 @@ _ACCENT_LUMENS = 400.0
 _ACCENT_BEAM_DEG = 24.0
 
 
+def _wall_has_opening(room: Room, wall_direction: str) -> bool:
+    """True if any door or window in this room sits on the wall facing
+    ``wall_direction``.
+
+    The check picks each opening's wall edge midpoint and tests whether
+    the direction from the room centroid to that midpoint matches the
+    given cardinal direction (N/S/E/W). Approximation that works for
+    rectangular and modestly-non-rectangular rooms.
+    """
+    if not room.polygon:
+        return False
+    centroid_x = sum(p.x for p in room.polygon) / len(room.polygon)
+    centroid_y = sum(p.y for p in room.polygon) / len(room.polygon)
+    n = len(room.polygon)
+    openings: list = list(room.doors) + list(room.windows)
+    for opening in openings:
+        wi = getattr(opening, "wall_index", None)
+        if wi is None or wi >= n:
+            continue
+        a = room.polygon[wi]
+        b = room.polygon[(wi + 1) % n]
+        dx = (a.x + b.x) / 2 - centroid_x
+        dy = (a.y + b.y) / 2 - centroid_y
+        if wall_direction == "N" and dy > abs(dx):
+            return True
+        if wall_direction == "S" and -dy > abs(dx):
+            return True
+        if wall_direction == "E" and dx > abs(dy):
+            return True
+        if wall_direction == "W" and -dx > abs(dy):
+            return True
+    return False
+
+
 def _strip_positions(
     room: Room, target_center: Point, wall_direction: str,
 ) -> list[Point]:
-    """Evenly distribute fixtures along a wall strip at ~`_ACCENT_SPACING_M` apart.
+    """Distribute up to `_MAX_GRAZERS_PER_WALL` fixtures along a wall strip
+    at ~`_ACCENT_SPACING_M` apart.
 
     Uses centred spacing — first and last fixture sit `step/2` from the corner
     rather than `step`, which matches how a designer scales a wash off the
@@ -41,7 +86,8 @@ def _strip_positions(
     if wall_direction in ("N", "S"):
         wall_min, wall_max = min(xs), max(xs)
         wall_len = wall_max - wall_min
-        count = max(1, int(wall_len / _ACCENT_SPACING_M))
+        count = min(_MAX_GRAZERS_PER_WALL,
+                    max(1, int(wall_len / _ACCENT_SPACING_M)))
         step = wall_len / count
         return [
             Point(x=wall_min + step * (i + 0.5), y=target_center.y)
@@ -50,7 +96,8 @@ def _strip_positions(
     # E / W
     wall_min, wall_max = min(ys), max(ys)
     wall_len = wall_max - wall_min
-    count = max(1, int(wall_len / _ACCENT_SPACING_M))
+    count = min(_MAX_GRAZERS_PER_WALL,
+                max(1, int(wall_len / _ACCENT_SPACING_M)))
     step = wall_len / count
     return [
         Point(x=target_center.x, y=wall_min + step * (i + 0.5))
@@ -63,11 +110,23 @@ def compute_accent_layer(
     digest: RoomDigest,
     zone: Zone,
 ) -> list[Fixture]:
-    """Place accent fixtures: wall washers along a strip, or one spotlight at a point."""
+    """Place accent fixtures: wall washers along a strip, or one spotlight at a point.
+
+    Walls with openings (doors / windows) skip the wall-wash treatment entirely
+    and fall back to a single spotlight at the wall midpoint — wall grazers
+    behind a window curtain rod or over a doorway are a v1 footgun.
+    """
     target = interpret_position_hint(zone.position_hint, room, digest)
     if target.region_type == "strip" and target.wall_direction is not None:
-        positions = _strip_positions(room, target.center, target.wall_direction)
-        fixture_type = zone.fixture_type or "wall_washer"
+        if _wall_has_opening(room, target.wall_direction):
+            # Don't wash a wall that has a window or door. Fall back to a
+            # single spot at the wall midpoint — the designer can move it
+            # to a real feature in the studio.
+            positions = [target.center]
+            fixture_type = "spotlight"
+        else:
+            positions = _strip_positions(room, target.center, target.wall_direction)
+            fixture_type = zone.fixture_type or "wall_washer"
     else:
         positions = [target.center]
         # A point target on the accent layer always reads as a spotlight
