@@ -49,21 +49,89 @@ function packNotes(extras: WallExtras, userNotes: string): string {
   return JSON.stringify({ extras, notes: userNotes });
 }
 
-function unpackNotes(notes: string | undefined): { extras: WallExtras; notes: string } {
-  if (!notes) return { extras: emptyExtras(), notes: "" };
+function unpackNotes(
+  notes: string | undefined,
+): { extras: WallExtras; notes: string; pristine: boolean } {
+  if (!notes) return { extras: emptyExtras(), notes: "", pristine: true };
   try {
     const parsed = JSON.parse(notes) as { extras?: WallExtras; notes?: string };
     if (parsed && typeof parsed === "object" && parsed.extras) {
-      return { extras: { ...emptyExtras(), ...parsed.extras }, notes: parsed.notes ?? "" };
+      return {
+        extras: { ...emptyExtras(), ...parsed.extras },
+        notes: parsed.notes ?? "",
+        pristine: false,
+      };
     }
   } catch {
     // Legacy notes (pre-v1.0.1) — plain string; treat as the user-notes field.
   }
-  return { extras: emptyExtras(), notes };
+  return { extras: emptyExtras(), notes, pristine: false };
 }
 
 function emptyExtras(): WallExtras {
   return { has_door: false, has_window: false };
+}
+
+/** Map a Door's `swing` value to a `DoorType` for the dropdown. The studio's
+ * door-type vocabulary is richer than the parser's (which only knows in/out/
+ * sliding/unknown), so non-sliding swings collapse to "regular". */
+function doorTypeFromSwing(swing: Door["swing"] | undefined): DoorType {
+  return swing === "sliding" ? "sliding" : "regular";
+}
+
+interface PrefillArgs {
+  wallIndex: number;
+  extras: WallExtras;
+  /** True when the wall has never been saved (notes string was empty). Only
+   * pristine walls get pre-filled from parsed openings — once the designer
+   * has saved this wall, their choices are sticky. */
+  pristine: boolean;
+  parsedDoors: Door[];
+  parsedWindows: ApiWindow[];
+  otherRoomIds: Set<string>;
+}
+
+/**
+ * Pre-fill `extras` from parsed doors / windows on this wall.
+ *
+ * Only runs for pristine walls (those that have never been saved). Once the
+ * designer has saved the wall — even with `has_door = false` — we treat their
+ * decision as authoritative and don't second-guess it.
+ *
+ * Multiple parsed doors on one wall (rare: wardrobe + entry on the same long
+ * wall) collapse to the first detected destination — the designer can edit.
+ */
+function prefillWallExtras({
+  wallIndex,
+  extras,
+  pristine,
+  parsedDoors,
+  parsedWindows,
+  otherRoomIds,
+}: PrefillArgs): WallExtras {
+  if (!pristine) return extras;
+  const next: WallExtras = { ...extras };
+  const doorOnWall = parsedDoors.find((d) => d.wall_index === wallIndex);
+  if (doorOnWall) {
+    next.has_door = true;
+    next.door_type = doorTypeFromSwing(doorOnWall.swing);
+    // Only adopt the parser's destination if the target room is still in the
+    // dropdown list — protects against stale ids after a re-parse.
+    if (
+      doorOnWall.destination_room_id &&
+      otherRoomIds.has(doorOnWall.destination_room_id)
+    ) {
+      next.leads_to = doorOnWall.destination_room_id;
+    }
+  }
+  const winOnWall = parsedWindows.find((w) => w.wall_index === wallIndex);
+  if (winOnWall) {
+    next.has_window = true;
+    next.window_width_m = winOnWall.width_m;
+    next.window_height_m = winOnWall.height_m;
+    next.window_sill_height_m = winOnWall.sill_height_m;
+  }
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,14 +225,30 @@ export default function WallsPage() {
         listRooms(pid),
       ]);
       setPolygon(room.polygon_inferred);
-      setParsedDoors(room.doors_parsed ?? []);
-      setParsedWindows(room.windows_parsed ?? []);
+      const parsedDoorsList = room.doors_parsed ?? [];
+      const parsedWindowsList = room.windows_parsed ?? [];
+      setParsedDoors(parsedDoorsList);
+      setParsedWindows(parsedWindowsList);
+      const otherRoomList = rooms.rooms.filter((r) => r.id !== rid);
+      const otherIdSet = new Set(otherRoomList.map((r) => r.id));
       const hydrated: WallState[] = wallsResult.walls.map((w) => {
-        const { extras, notes } = unpackNotes(w.notes);
-        return { ...w, extras, userNotes: notes };
+        const { extras, notes, pristine } = unpackNotes(w.notes);
+        // Phase C: pre-fill door/window defaults from parsed openings on
+        // pristine walls (those the designer has never saved). Once the
+        // designer has saved a wall, their choices are sticky and we don't
+        // second-guess them — even `has_door = false` stays false.
+        const prefilled = prefillWallExtras({
+          wallIndex: w.index,
+          extras,
+          pristine,
+          parsedDoors: parsedDoorsList,
+          parsedWindows: parsedWindowsList,
+          otherRoomIds: otherIdSet,
+        });
+        return { ...w, extras: prefilled, userNotes: notes };
       });
       setWalls(hydrated);
-      setOtherRooms(rooms.rooms.filter((r) => r.id !== rid));
+      setOtherRooms(otherRoomList);
       if (hydrated.length > 0 && activeWallIndex === null) {
         setActiveWallIndex(hydrated[0].index);
       }
