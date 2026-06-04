@@ -217,7 +217,10 @@ class ConfirmedRoomInput(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    ceiling_type: Literal["false", "flat", "sloped", "mixed"] = "flat"
+    ceiling_type: Literal[
+        "none", "flat", "cove", "tray", "multi_level",
+        "pop_design", "wooden", "fluted", "sloped", "mixed",
+    ] = "flat"
     main_window_orientation: Literal["N", "S", "E", "W", "none"] = "none"
     designer_brief: DesignerBrief
 

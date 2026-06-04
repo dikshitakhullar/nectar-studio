@@ -24,7 +24,17 @@ export type RoomType =
 
 export type RoomTier = "first_class" | "generic";
 
-export type CeilingType = "none" | "flat" | "sloped" | "mixed";
+export type CeilingType =
+  | "none"
+  | "flat"
+  | "cove"
+  | "tray"
+  | "multi_level"
+  | "pop_design"
+  | "wooden"
+  | "fluted"
+  | "sloped"
+  | "mixed";
 
 export type Direction = "N" | "S" | "E" | "W";
 

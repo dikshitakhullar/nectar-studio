@@ -65,10 +65,16 @@ const ROOM_TYPE_OPTIONS: { id: RoomType; label: string }[] = [
 ];
 
 const CEILING_TYPE_OPTIONS: { id: CeilingType; label: string }[] = [
-  { id: "flat", label: "Flat (no false ceiling)" },
-  { id: "none", label: "Exposed slab" },
-  { id: "sloped", label: "Sloped" },
-  { id: "mixed", label: "Mixed" },
+  { id: "flat", label: "Flat false ceiling (POP/gypsum)" },
+  { id: "cove", label: "Cove — perimeter cove + raised central" },
+  { id: "tray", label: "Tray — recessed central" },
+  { id: "multi_level", label: "Multi-level (LVL ±0 / ±6 / etc.)" },
+  { id: "pop_design", label: "POP design (decorative)" },
+  { id: "wooden", label: "Wooden panels / slats" },
+  { id: "fluted", label: "Fluted panels" },
+  { id: "none", label: "Exposed RCC slab" },
+  { id: "sloped", label: "Sloped / pitched" },
+  { id: "mixed", label: "Mixed (combination)" },
 ];
 
 const DIRECTION_OPTIONS: { id: Direction; label: string; description?: string }[] = [

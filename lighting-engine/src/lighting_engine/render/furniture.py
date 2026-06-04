@@ -82,16 +82,29 @@ def _polygon_centroid(polygon: list[Point]) -> Point:
     return Point(x=cx / area6, y=cy / area6)
 
 
-def _resolve_lamp_position(zone: Zone, room: Room) -> Point:
+def _resolve_lamp_position(
+    zone: Zone, room: Room, *, index: int, total: int,
+) -> Point:
     """Resolve a Zone's ``position_hint`` to a Point on the room polygon.
 
-    v1: returns the polygon centroid as a safe fallback because the Phase-4
-    ``zone_interpreter`` may not be available on the current branch. The
-    signature is stable, so when the interpreter lands this function becomes
-    a one-line delegation to ``interpret_position_hint``.
+    v1 fallback: distribute multiple lamps around the polygon centroid so
+    they don't stack at one point (which made the labels overlap into
+    unreadable garbage). When the Phase-4 ``zone_interpreter`` lands, this
+    function delegates to it for hint-aware placement.
     """
-    _ = zone  # position_hint is not yet consulted in the v1 fallback
-    return _polygon_centroid(room.polygon)
+    _ = zone  # position_hint not yet consulted in the v1 fallback
+    centroid = _polygon_centroid(room.polygon)
+    if total <= 1:
+        return centroid
+    # Spread N lamps evenly around the centroid in a small ring (1m radius).
+    # 1m is enough world separation that 11px-text labels won't overlap.
+    import math
+    angle = (index / total) * 2.0 * math.pi
+    radius = 1.0
+    return Point(
+        x=centroid.x + radius * math.cos(angle),
+        y=centroid.y + radius * math.sin(angle),
+    )
 
 
 def _lamp_class(fixture_type: str | None) -> str:
@@ -154,8 +167,11 @@ def render_furniture_svg(room: Room, lamp_suggestions: list[Zone]) -> str:
         )
 
     # Lamp suggestions as triangles (apex up) with labels
-    for zone in lamp_suggestions:
-        target = _resolve_lamp_position(zone, room)
+    total_lamps = len(lamp_suggestions)
+    for index, zone in enumerate(lamp_suggestions):
+        target = _resolve_lamp_position(
+            zone, room, index=index, total=total_lamps,
+        )
         cls = _lamp_class(zone.fixture_type)
         cx = x(target.x)
         cy = y(target.y)

@@ -35,10 +35,22 @@ class RoomTier(StrEnum):
 
 
 class CeilingType(StrEnum):
-    none = "none"            # exposed slab / no false ceiling
-    flat = "flat"
-    sloped = "sloped"
-    mixed = "mixed"
+    """Indian residential ceiling vocabulary (v1.0.x expansion).
+
+    Common combinations (cove + fluted, multi_level + wooden) are captured as
+    `mixed`. v1.2 will replace this single tag with a structured CeilingDesign
+    object parsed from the RCP PDF.
+    """
+    none = "none"                # exposed RCC slab, no false ceiling
+    flat = "flat"                # POP/gypsum, single level
+    cove = "cove"                # perimeter cove + raised central (most common)
+    tray = "tray"                # recessed central area
+    multi_level = "multi_level"  # multiple step-downs/ups (LVL ±0 / ±6 / etc.)
+    pop_design = "pop_design"    # POP with decorative patterns
+    wooden = "wooden"            # wood paneling / slats
+    fluted = "fluted"            # fluted panels (e.g. curve flutes)
+    sloped = "sloped"            # pitched
+    mixed = "mixed"              # combination of above
 
 
 class Direction(StrEnum):
