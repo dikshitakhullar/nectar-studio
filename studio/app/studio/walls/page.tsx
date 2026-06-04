@@ -2,21 +2,131 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StepNav } from "../components/StepNav";
+import { RoomMiniMap } from "../components/RoomMiniMap";
 import { ErrorBanner, Spinner } from "../components/UIPrimitives";
-import { ApiError, getWalls, postWall } from "@/lib/api/client";
-import type { WallConfirmation } from "@/lib/api/types";
+import { ApiError, getRoom, getWalls, listRooms, postWall } from "@/lib/api/client";
+import type { Point, RoomSummary, WallConfirmation } from "@/lib/api/types";
 import { buildStudioQuery, readStudioIds } from "@/lib/api/url-state";
+import { formatDim } from "@/lib/format/dimensions";
+
+// ---------------------------------------------------------------------------
+// Per-wall structured state — packed into WallConfirmation.notes as JSON for
+// v1.0.1. Promoted to first-class API fields in v1.1.
+// ---------------------------------------------------------------------------
+
+type DoorType = "regular" | "sliding" | "double" | "pocket" | "bifold";
+const DOOR_TYPES: { value: DoorType; label: string }[] = [
+  { value: "regular", label: "Regular swing" },
+  { value: "sliding", label: "Sliding" },
+  { value: "double", label: "Double" },
+  { value: "pocket", label: "Pocket" },
+  { value: "bifold", label: "Bifold" },
+];
+
+interface WallExtras {
+  has_door: boolean;
+  door_type?: DoorType;
+  leads_to?: string;          // room id of adjacent room
+  has_window: boolean;
+  window_width_m?: number;
+  window_height_m?: number;
+  window_sill_height_m?: number;
+}
+
+function packNotes(extras: WallExtras, userNotes: string): string {
+  return JSON.stringify({ extras, notes: userNotes });
+}
+
+function unpackNotes(notes: string | undefined): { extras: WallExtras; notes: string } {
+  if (!notes) return { extras: emptyExtras(), notes: "" };
+  try {
+    const parsed = JSON.parse(notes) as { extras?: WallExtras; notes?: string };
+    if (parsed && typeof parsed === "object" && parsed.extras) {
+      return { extras: { ...emptyExtras(), ...parsed.extras }, notes: parsed.notes ?? "" };
+    }
+  } catch {
+    // Legacy notes (pre-v1.0.1) — plain string; treat as the user-notes field.
+  }
+  return { extras: emptyExtras(), notes };
+}
+
+function emptyExtras(): WallExtras {
+  return { has_door: false, has_window: false };
+}
+
+// ---------------------------------------------------------------------------
+// Polygon helpers — wall direction (N/S/E/W) + length from polygon edge.
+// ---------------------------------------------------------------------------
+
+function polygonCentroid(polygon: Point[]): Point {
+  const n = polygon.length;
+  return {
+    x: polygon.reduce((s, p) => s + p.x, 0) / n,
+    y: polygon.reduce((s, p) => s + p.y, 0) / n,
+  };
+}
+
+function wallLength(polygon: Point[], index: number): number {
+  const a = polygon[index];
+  const b = polygon[(index + 1) % polygon.length];
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/** Direction the wall faces (outward normal). Local frame: y is north. */
+function wallDirection(polygon: Point[], index: number): string {
+  const a = polygon[index];
+  const b = polygon[(index + 1) % polygon.length];
+  const centroid = polygonCentroid(polygon);
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  // Outward vector from polygon centroid to edge midpoint.
+  const dx = midX - centroid.x;
+  const dy = midY - centroid.y;
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (angle >= -22.5 && angle < 22.5) return "East";
+  if (angle >= 22.5 && angle < 67.5) return "Northeast";
+  if (angle >= 67.5 && angle < 112.5) return "North";
+  if (angle >= 112.5 && angle < 157.5) return "Northwest";
+  if (angle >= 157.5 || angle < -157.5) return "West";
+  if (angle >= -157.5 && angle < -112.5) return "Southwest";
+  if (angle >= -112.5 && angle < -67.5) return "South";
+  return "Southeast";
+}
+
+function wallLetter(index: number): string {
+  // A, B, C, ..., Z, AA, AB, ...
+  if (index < 26) return String.fromCharCode(65 + index);
+  const first = Math.floor(index / 26) - 1;
+  const second = index % 26;
+  return String.fromCharCode(65 + first) + String.fromCharCode(65 + second);
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+interface WallState extends WallConfirmation {
+  extras: WallExtras;
+  userNotes: string;
+}
+
+const SAVE_DEBOUNCE_MS = 500;
 
 export default function WallsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { pid, rid } = readStudioIds(searchParams);
 
-  const [walls, setWalls] = useState<WallConfirmation[] | null>(null);
+  const [polygon, setPolygon] = useState<Point[] | null>(null);
+  const [walls, setWalls] = useState<WallState[] | null>(null);
+  const [otherRooms, setOtherRooms] = useState<RoomSummary[]>([]);
+  const [activeWallIndex, setActiveWallIndex] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const wallRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const load = useCallback(async () => {
     if (!pid || !rid) {
@@ -25,67 +135,93 @@ export default function WallsPage() {
     }
     setError(null);
     try {
-      const result = await getWalls(pid, rid);
-      setWalls(result.walls);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(`${err.message} (HTTP ${err.status})`);
-      } else if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Failed to load walls.");
+      const [room, wallsResult, rooms] = await Promise.all([
+        getRoom(pid, rid),
+        getWalls(pid, rid),
+        listRooms(pid),
+      ]);
+      setPolygon(room.polygon_inferred);
+      const hydrated: WallState[] = wallsResult.walls.map((w) => {
+        const { extras, notes } = unpackNotes(w.notes);
+        return { ...w, extras, userNotes: notes };
+      });
+      setWalls(hydrated);
+      setOtherRooms(rooms.rooms.filter((r) => r.id !== rid));
+      if (hydrated.length > 0 && activeWallIndex === null) {
+        setActiveWallIndex(hydrated[0].index);
       }
+    } catch (err) {
+      setError(formatErr(err, "Failed to load walls."));
     }
+  }, [pid, rid, activeWallIndex]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Debounced auto-save: when a wall's local state changes, POST after 500ms.
+  const saveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const scheduleSave = useCallback((wall: WallState) => {
+    if (!pid || !rid) return;
+    const existing = saveTimers.current.get(wall.index);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      void postWall(pid, rid, wall.index, {
+        index: wall.index,
+        confirm: wall.confirm ?? true,
+        doors_confirmed: wall.doors_confirmed ?? [],
+        windows_confirmed: wall.windows_confirmed ?? [],
+        notes: packNotes(wall.extras, wall.userNotes),
+      }).catch((err) => setError(formatErr(err, "Couldn't save wall.")));
+    }, SAVE_DEBOUNCE_MS);
+    saveTimers.current.set(wall.index, timer);
   }, [pid, rid]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const updateWall = useCallback(
+    (index: number, mutate: (w: WallState) => WallState) => {
+      setWalls((prev) => {
+        if (!prev) return prev;
+        const next = prev.map((w) => (w.index === index ? mutate(w) : w));
+        const changed = next.find((w) => w.index === index);
+        if (changed) scheduleSave(changed);
+        return next;
+      });
+    },
+    [scheduleSave],
+  );
 
-  const toggleConfirm = (index: number) => {
-    setWalls((prev) =>
-      prev
-        ? prev.map((w) =>
-            w.index === index ? { ...w, confirm: !(w.confirm ?? false) } : w,
-          )
-        : prev,
-    );
-  };
+  const onSelectWall = useCallback((index: number) => {
+    setActiveWallIndex(index);
+    const el = wallRefs.current.get(index);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
 
-  const updateNotes = (index: number, notes: string) => {
-    setWalls((prev) =>
-      prev ? prev.map((w) => (w.index === index ? { ...w, notes } : w)) : prev,
-    );
-  };
-
-  const onSubmit = async (e: React.FormEvent) => {
+  const onContinue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pid || !rid || !walls) return;
     setSubmitting(true);
     setError(null);
+    // Flush any pending debounced saves before navigating.
+    for (const timer of saveTimers.current.values()) clearTimeout(timer);
     try {
-      // Post each wall sequentially so any 400 surfaces clearly to the user.
       for (const wall of walls) {
         await postWall(pid, rid, wall.index, {
           index: wall.index,
           confirm: wall.confirm ?? true,
           doors_confirmed: wall.doors_confirmed ?? [],
           windows_confirmed: wall.windows_confirmed ?? [],
-          notes: wall.notes ?? "",
+          notes: packNotes(wall.extras, wall.userNotes),
         });
       }
       router.push(`/studio/furniture?${buildStudioQuery(pid, rid)}`);
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(`${err.message} (HTTP ${err.status})`);
-      } else if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Could not save walls.");
-      }
+      setError(formatErr(err, "Couldn't save walls."));
       setSubmitting(false);
     }
   };
+
+  const wallLabels = useMemo(
+    () => walls?.map((w) => wallLetter(w.index)) ?? [],
+    [walls],
+  );
 
   if (!pid || !rid) {
     return (
@@ -103,9 +239,8 @@ export default function WallsPage() {
       <div className="space-y-2">
         <h1 className="text-2xl font-light tracking-tight text-stone-900">Walls</h1>
         <p className="text-stone-600 text-sm">
-          One row per wall, derived from the parsed polygon. Confirm the wall
-          exists (it should — checked by default), and add a short note if
-          there&apos;s something the parser missed.
+          Confirm what&apos;s on each wall, or correct what the parser detected.
+          Tap a wall on the map to jump to its card.
         </p>
       </div>
 
@@ -114,69 +249,299 @@ export default function WallsPage() {
 
       {walls !== null && walls.length === 0 && (
         <div className="bg-stone-100 border border-stone-200 rounded-md p-4 text-sm text-stone-700">
-          The parser didn&apos;t return any wall edges — this is unusual. You
-          can still continue.
+          The parser didn&apos;t return any wall edges — unusual. You can still
+          continue.
         </div>
       )}
 
-      {walls !== null && walls.length > 0 && (
-        <form onSubmit={onSubmit} className="space-y-4">
-          <ul className="space-y-2">
-            {walls.map((wall) => (
-              <li
-                key={wall.index}
-                className="bg-white border border-stone-200 rounded-md p-3 space-y-2"
-              >
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={wall.confirm ?? false}
-                    onChange={() => toggleConfirm(wall.index)}
-                    className="rounded border-stone-300 text-amber-700 focus:ring-amber-700"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-stone-900">
-                      Wall #{wall.index}
-                    </div>
-                    <div className="text-xs text-stone-500">
-                      {(wall.doors_confirmed?.length ?? 0)} door
-                      {(wall.doors_confirmed?.length ?? 0) === 1 ? "" : "s"} ·{" "}
-                      {(wall.windows_confirmed?.length ?? 0)} window
-                      {(wall.windows_confirmed?.length ?? 0) === 1 ? "" : "s"}
-                    </div>
-                  </div>
-                </label>
-                <input
-                  type="text"
-                  value={wall.notes ?? ""}
-                  onChange={(e) => updateNotes(wall.index, e.target.value)}
-                  placeholder="Notes (optional)"
-                  className="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-xs text-stone-900 focus:border-stone-400 outline-none"
-                />
-              </li>
-            ))}
-          </ul>
+      {walls !== null && walls.length > 0 && polygon !== null && (
+        <form onSubmit={onContinue} className="grid gap-6 md:grid-cols-[260px_1fr]">
+          {/* Left rail — sticky mini-map */}
+          <aside className="space-y-3 md:sticky md:top-6 md:self-start">
+            <RoomMiniMap
+              polygon={polygon}
+              activeWallIndex={activeWallIndex}
+              wallLabels={wallLabels}
+              onSelectWall={onSelectWall}
+            />
+            <p className="text-xs text-stone-500 text-center">
+              Tap a wall on the map to edit
+            </p>
+          </aside>
 
-          <div className="flex justify-between pt-6 border-t border-stone-200">
-            <Link
-              href={`/studio/room-basics?${buildStudioQuery(pid, rid)}`}
-              className="text-sm text-stone-500 hover:text-stone-700"
-            >
-              ← Back to room basics
-            </Link>
-            {submitting ? (
-              <Spinner label="Saving walls…" />
-            ) : (
-              <button
-                type="submit"
-                className="bg-stone-900 text-white px-5 py-2 rounded-md text-sm font-medium hover:bg-stone-800 transition"
+          {/* Right column — wall cards */}
+          <div className="space-y-3">
+            {walls.map((wall) => (
+              <WallCard
+                key={wall.index}
+                wall={wall}
+                polygon={polygon}
+                otherRooms={otherRooms}
+                isActive={activeWallIndex === wall.index}
+                onFocus={() => setActiveWallIndex(wall.index)}
+                onUpdate={(mutate) => updateWall(wall.index, mutate)}
+                cardRef={(el) => {
+                  if (el) wallRefs.current.set(wall.index, el);
+                  else wallRefs.current.delete(wall.index);
+                }}
+              />
+            ))}
+
+            <div className="flex justify-between pt-6 border-t border-stone-200">
+              <Link
+                href={`/studio/room-basics?${buildStudioQuery(pid, rid)}`}
+                className="text-sm text-stone-500 hover:text-stone-700"
               >
-                Continue to furniture →
-              </button>
-            )}
+                ← Back to room basics
+              </Link>
+              {submitting ? (
+                <Spinner label="Saving walls…" />
+              ) : (
+                <button
+                  type="submit"
+                  className="bg-stone-900 text-white px-5 py-2 rounded-md text-sm font-medium hover:bg-stone-800 transition"
+                >
+                  Continue to furniture →
+                </button>
+              )}
+            </div>
           </div>
         </form>
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// WallCard — per-wall structured inputs.
+// ---------------------------------------------------------------------------
+
+interface WallCardProps {
+  wall: WallState;
+  polygon: Point[];
+  otherRooms: RoomSummary[];
+  isActive: boolean;
+  onFocus: () => void;
+  onUpdate: (mutate: (w: WallState) => WallState) => void;
+  cardRef: (el: HTMLDivElement | null) => void;
+}
+
+function WallCard({
+  wall, polygon, otherRooms, isActive, onFocus, onUpdate, cardRef,
+}: WallCardProps) {
+  const direction = wallDirection(polygon, wall.index);
+  const lengthM = wallLength(polygon, wall.index);
+  const detectedDoors = wall.doors_confirmed?.length ?? 0;
+  const detectedWindows = wall.windows_confirmed?.length ?? 0;
+  const isSolid = !wall.extras.has_door && !wall.extras.has_window;
+
+  return (
+    <div
+      ref={cardRef}
+      onFocus={onFocus}
+      onClick={onFocus}
+      className={`bg-white border rounded-md p-4 space-y-3 transition ${
+        isActive ? "border-amber-700 shadow-sm" : "border-stone-200"
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-baseline justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-stone-900">
+            Wall {wallLetter(wall.index)} — {direction}
+          </div>
+          <div className="text-xs text-stone-500">
+            {formatDim(lengthM)}
+            {(detectedDoors > 0 || detectedWindows > 0) && (
+              <> · detected {detectedDoors} door{detectedDoors === 1 ? "" : "s"}, {detectedWindows} window{detectedWindows === 1 ? "" : "s"}</>
+            )}
+          </div>
+        </div>
+        {isSolid && (
+          <span className="text-xs text-stone-400 italic">solid wall</span>
+        )}
+      </div>
+
+      {/* Door section */}
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={wall.extras.has_door}
+          onChange={(e) =>
+            onUpdate((w) => ({
+              ...w,
+              extras: { ...w.extras, has_door: e.target.checked },
+            }))
+          }
+          className="rounded border-stone-300 text-amber-700 focus:ring-amber-700"
+        />
+        <span className="text-sm text-stone-800">Has a door</span>
+      </label>
+      {wall.extras.has_door && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-6">
+          <label className="block text-xs">
+            <span className="block text-stone-500 mb-1">Type</span>
+            <select
+              value={wall.extras.door_type ?? "regular"}
+              onChange={(e) =>
+                onUpdate((w) => ({
+                  ...w,
+                  extras: { ...w.extras, door_type: e.target.value as DoorType },
+                }))
+              }
+              className="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-stone-900 focus:border-stone-400 outline-none"
+            >
+              {DOOR_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs">
+            <span className="block text-stone-500 mb-1">Leads to</span>
+            <select
+              value={wall.extras.leads_to ?? ""}
+              onChange={(e) =>
+                onUpdate((w) => ({
+                  ...w,
+                  extras: { ...w.extras, leads_to: e.target.value || undefined },
+                }))
+              }
+              className="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-stone-900 focus:border-stone-400 outline-none"
+              disabled={otherRooms.length === 0}
+            >
+              <option value="">
+                {otherRooms.length === 0 ? "(no other rooms)" : "Select…"}
+              </option>
+              {otherRooms.map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {/* Window section */}
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={wall.extras.has_window}
+          onChange={(e) =>
+            onUpdate((w) => ({
+              ...w,
+              extras: {
+                ...w.extras,
+                has_window: e.target.checked,
+                window_width_m: e.target.checked ? (w.extras.window_width_m ?? 1.2) : undefined,
+                window_height_m: e.target.checked ? (w.extras.window_height_m ?? 1.2) : undefined,
+                window_sill_height_m: e.target.checked ? (w.extras.window_sill_height_m ?? 0.9) : undefined,
+              },
+            }))
+          }
+          className="rounded border-stone-300 text-amber-700 focus:ring-amber-700"
+        />
+        <span className="text-sm text-stone-800">Has a window</span>
+      </label>
+      {wall.extras.has_window && (
+        <div className="grid grid-cols-3 gap-2 pl-6">
+          <DimInput
+            label="Width"
+            value={wall.extras.window_width_m ?? 1.2}
+            onChange={(v) =>
+              onUpdate((w) => ({
+                ...w,
+                extras: { ...w.extras, window_width_m: v },
+              }))
+            }
+          />
+          <DimInput
+            label="Height"
+            value={wall.extras.window_height_m ?? 1.2}
+            onChange={(v) =>
+              onUpdate((w) => ({
+                ...w,
+                extras: { ...w.extras, window_height_m: v },
+              }))
+            }
+          />
+          <DimInput
+            label="Sill"
+            value={wall.extras.window_sill_height_m ?? 0.9}
+            onChange={(v) =>
+              onUpdate((w) => ({
+                ...w,
+                extras: { ...w.extras, window_sill_height_m: v },
+              }))
+            }
+          />
+        </div>
+      )}
+
+      {/* Free-text notes */}
+      <label className="block text-xs">
+        <span className="block text-stone-500 mb-1">Notes (optional)</span>
+        <input
+          type="text"
+          value={wall.userNotes}
+          onChange={(e) =>
+            onUpdate((w) => ({ ...w, userNotes: e.target.value }))
+          }
+          placeholder="alcove, partial wall, glass partition, …"
+          className="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-stone-900 focus:border-stone-400 outline-none"
+        />
+      </label>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DimInput — accepts meters or feet syntax, displays both on blur.
+// ---------------------------------------------------------------------------
+
+interface DimInputProps {
+  label: string;
+  value: number;          // meters (canonical)
+  onChange: (meters: number) => void;
+}
+
+function DimInput({ label, value, onChange }: DimInputProps) {
+  const [text, setText] = useState<string>(value.toFixed(2));
+  const [pristine, setPristine] = useState(true);
+
+  // Re-sync when the canonical value changes (e.g., parent reset).
+  useEffect(() => {
+    if (pristine) setText(value.toFixed(2));
+  }, [value, pristine]);
+
+  return (
+    <label className="block text-xs">
+      <span className="block text-stone-500 mb-1">{label}</span>
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => { setText(e.target.value); setPristine(false); }}
+        onBlur={() => {
+          const meters = parseFloat(text);
+          if (Number.isFinite(meters) && meters > 0) {
+            onChange(meters);
+            setText(meters.toFixed(2));
+          } else {
+            setText(value.toFixed(2));
+          }
+          setPristine(true);
+        }}
+        className="w-full bg-stone-50 border border-stone-200 rounded-md px-3 py-1.5 text-stone-900 focus:border-stone-400 outline-none"
+      />
+      <span className="block text-[10px] text-stone-400 mt-0.5">
+        {formatDim(value)}
+      </span>
+    </label>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function formatErr(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return `${err.message} (HTTP ${err.status})`;
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
