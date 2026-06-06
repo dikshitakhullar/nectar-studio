@@ -7,7 +7,6 @@ handles edge cases without raising.
 
 import io
 
-import pytest
 from PIL import Image
 
 from lighting_engine.design.room_render import render_room_for_vision
