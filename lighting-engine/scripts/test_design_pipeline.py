@@ -15,7 +15,6 @@ Requires ANTHROPIC_API_KEY (loaded from .env.local automatically).
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -77,6 +76,7 @@ def main(argv: list[str]) -> int:
         StandardsSnapshot,
     )
     from lighting_engine.design.intent_generator import generate_design
+    from lighting_engine.design.placement import place_design
     from lighting_engine.design.room_render import render_room_for_vision
     from lighting_engine.design.scene_understanding import understand_scene
     from lighting_engine.parser.furniture_merge import merge_furniture_from_file
@@ -139,7 +139,7 @@ def main(argv: list[str]) -> int:
     print("=" * 72)
     print(f"ROOM DESIGN — {room.name}")
     print("=" * 72)
-    print(f"\nOverall rationale:")
+    print("\nOverall rationale:")
     print(f"  {design.overall_rationale}")
     print(f"\nZones ({len(design.zones)}):")
     for i, z in enumerate(design.zones, 1):
@@ -153,10 +153,30 @@ def main(argv: list[str]) -> int:
         print(f"      → {z.rationale}")
 
     print()
+    print("=> [Placement] Applying intent → fixture rules...")
+    fixtures = place_design(design=design, room=room, scene=scene)
+
+    print()
     print("=" * 72)
-    print("Raw JSON")
+    print(f"PLACED FIXTURES — {len(fixtures)} total")
     print("=" * 72)
-    print(json.dumps(design.model_dump(mode="json"), indent=2))
+    by_layer: dict[str, list] = {}
+    for f in fixtures:
+        by_layer.setdefault(f.layer.value, []).append(f)
+    for layer_name in ("ambient", "task", "accent", "decorative"):
+        layer_fixtures = by_layer.get(layer_name, [])
+        if not layer_fixtures:
+            continue
+        print(f"\n{layer_name.upper()} ({len(layer_fixtures)}):")
+        for f in layer_fixtures:
+            mount = (
+                f"@floor +{f.mount_height_m}m" if f.mount_height_m else "@ceiling"
+            )
+            print(
+                f"  - {f.type:14s} ({f.position.x:.2f}, {f.position.y:.2f}) "
+                f"{mount}  {f.cct_k}K"
+            )
+            print(f"    → {f.reasoning}")
     return 0
 
 
