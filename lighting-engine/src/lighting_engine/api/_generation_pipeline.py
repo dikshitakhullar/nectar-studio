@@ -29,6 +29,10 @@ from lighting_engine.brief.models import (
     FixtureCatalogOption,
     StandardsSnapshot,
 )
+from lighting_engine.design.feature_flag import is_v1_designer_enabled
+from lighting_engine.design.intent_generator import generate_design
+from lighting_engine.design.placement import place_design
+from lighting_engine.design.scene_understanding import understand_scene
 from lighting_engine.digest import compute_digest
 from lighting_engine.lighting.fixtures import (
     DEFAULT_COOL_DOWNLIGHT,
@@ -180,11 +184,101 @@ def _to_api_lux_stats(stats: object) -> ApiLuxStats:
     )
 
 
-def _build_plan_response(
+def _build_plan_response_v1_designer(
     *, project_id: str, room_id: str,
     confirmed: ConfirmedRoom,
 ) -> PlanResponse:
-    """The actual orchestration: ConfirmedRoom → PlanResponse."""
+    """v1 designer flow: scene (LLM-1) → design (LLM-2) → placement rules.
+
+    Per the founder rule (`feedback_no_unjustified_heuristics.md`): every
+    fixture's reasoning ties back to a specific feature in THIS room, not
+    a generic room-type recipe. The scene understands what's on each wall
+    and where the focal points are; the design assigns one intent per
+    feature; the placement library turns each intent into Fixtures with
+    hard rules (no fixture on furniture, no wall-wash over openings).
+    """
+    room = _confirmed_to_room(confirmed)
+    project = Project(id=project_id, name=confirmed.name, rooms=[room])
+    room_type = confirmed.type_confirmed or confirmed.type_inferred
+    standard = get_lux_standard(room_type)
+
+    # LLM-1: scene understanding
+    scene = understand_scene(
+        project=project, room_id=room.id,
+        ceiling_type=(
+            confirmed.ceiling_type.value if confirmed.ceiling_type else None
+        ),
+    )
+
+    # LLM-2: design intent
+    designer_brief = DesignerBrief(
+        intent_mood=confirmed.intent_mood or "cozy",
+        activities=list(confirmed.activities),
+        time_of_use=list(confirmed.time_of_use),
+        occupants=list(confirmed.occupants),
+        floor_finish=confirmed.floor_finish,
+        wall_finish=confirmed.wall_finish,
+        notes=confirmed.furniture_notes,
+    )
+    standards_snapshot = StandardsSnapshot(
+        target_lux=standard.target_lux,
+        cct_k=standard.cct_k,
+        cri_min=standard.cri_min,
+    )
+    design = generate_design(
+        scene=scene, brief=designer_brief, standards=standards_snapshot,
+        catalog=_fixture_catalog(),
+        room_name=room.name, room_type=str(room_type),
+    )
+
+    # Placement rules
+    fixtures = place_design(design=design, room=room, scene=scene)
+
+    raw_stats = compute_uniformity(
+        room, fixtures, target_lux=standard.target_lux,
+    )
+    rcp = render_rcp_svg(room, fixtures)
+    # No floor/table lamp Zones in the v1 designer yet — the furniture SVG
+    # gets just the parsed furniture + any decorative_floor_lamp zones the
+    # designer added (these come through as Fixtures, not Zones, so the
+    # current furniture renderer's lamp argument stays empty for now).
+    furniture_svg = render_furniture_svg(room, [])
+
+    # Per-zone rationale → `design_notes`. Studio shows one per zone.
+    notes = [
+        f"[{z.intent}] {z.rationale}" for z in design.zones
+    ]
+
+    return PlanResponse(
+        project_id=project_id,
+        room_id=room_id,
+        rcp_svg=rcp,
+        furniture_svg=furniture_svg,
+        lux_uniformity=_to_api_lux_stats(raw_stats),
+        fixture_schedule=_build_fixture_schedule(fixtures),
+        design_rationale=design.overall_rationale,
+        design_notes=notes,
+        warnings=[],
+        metadata={
+            "generated_at": datetime.now(UTC).isoformat(),
+            "model_used": "claude-opus-4-7",
+            "pipeline": "v1_designer",
+            "fixture_count": len(fixtures),
+            "zone_count": len(design.zones),
+            "scene_confidence": scene.confidence,
+        },
+    )
+
+
+def _build_plan_response_legacy(
+    *, project_id: str, room_id: str,
+    confirmed: ConfirmedRoom,
+) -> PlanResponse:
+    """Legacy v0 flow: single LLM brief + multi-layer placement.
+
+    Kept as the fallback path when the v1 designer feature flag is off
+    (default). No regression risk for existing projects.
+    """
     room = _confirmed_to_room(confirmed)
     project = Project(id=project_id, name=confirmed.name, rooms=[room])
     digest = compute_digest(project).rooms[0]
@@ -214,8 +308,23 @@ def _build_plan_response(
         metadata={
             "generated_at": datetime.now(UTC).isoformat(),
             "model_used": "claude-opus-4-7",
+            "pipeline": "legacy",
             "fixture_count": len(fixtures),
         },
+    )
+
+
+def _build_plan_response(
+    *, project_id: str, room_id: str,
+    confirmed: ConfirmedRoom,
+) -> PlanResponse:
+    """Switch by feature flag; legacy is the default."""
+    if is_v1_designer_enabled():
+        return _build_plan_response_v1_designer(
+            project_id=project_id, room_id=room_id, confirmed=confirmed,
+        )
+    return _build_plan_response_legacy(
+        project_id=project_id, room_id=room_id, confirmed=confirmed,
     )
 
 
