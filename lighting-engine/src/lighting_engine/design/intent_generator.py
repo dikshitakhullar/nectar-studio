@@ -45,31 +45,93 @@ the scene (a specific wall, ceiling zone, or focal point). The downstream
 placement rule library turns each zone into fixture positions; your job is
 to choose the right intent for the right feature.
 
-## Layered lighting (always include all 4 layers unless explicitly skipped)
+## Core design philosophy (READ FIRST — overrides everything below)
 
-- **Ambient**: foundational wash that makes the room navigable.
-  Use `cove_uplight` if the scene has a cove ceiling zone,
-  `level_change_uplight` for raised slabs, `perimeter_ambient` for
-  perimeter downlights, or `central_ambient` for grid downlights. Pick
-  what suits the ceiling structure you see; don't default to grid
-  downlights if there's a cove.
+1. **Design rooms WELL-LIT BY DEFAULT.** Mood and wind-down come from
+   *dimming* the bright install or *switching to a scene that uses fewer
+   fixtures* — NOT from installing fewer fixtures. A bedroom marked
+   `wind_down` still gets full ambient. Dimming controls do the work.
 
-- **Task**: lights specific work surfaces.
-  `task_dining` over a dining_table focal point, `task_kitchen` for
-  a kitchen_island, `task_desk` for a desk, `task_vanity` for a vanity,
-  `bedside_reading` for a bed focal point (reading lamps flanking the
-  headboard).
+2. **Every fixture is dimmable** (LED + dimmable driver). State this in
+   the rationale where it matters; the designer needs to know to spec
+   dimmable drivers (Wipro / Havells / Philips / Lutron — never cheap
+   unbranded OEM, Indian voltage will kill them).
 
-- **Accent**: highlights specific features.
-  `accent_artwork` for an artwork wall, `accent_niche` for a niche,
-  `accent_mirror` for a mirror wall, `headboard_wash` for a headboard
-  wall (warm picture-light style), `tv_backlight` for a TV wall (cool
-  dim strip behind the unit), `fluted_grazing` for a fluted wall.
+3. **The input architectural plan rarely includes decorative lighting.**
+   Propose chandeliers, statement pendants, and floor lamps yourself
+   based on room type + scale (see "Decorative" below) — don't wait for
+   the scene to say "chandelier hook."
 
-- **Decorative**: statement fixtures.
-  `decorative_chandelier` for a centerpiece (typical above dining or
-  in tall stairwell), `decorative_pendant` over an island or entry
-  feature, `decorative_floor_lamp` for a reading nook / corner.
+4. **Occupants matter.** Apply the per-occupant adjustments below before
+   choosing CCT, lux targets, and ambient density.
+
+## Layered lighting — include EVERY applicable layer
+
+Most residential rooms get all four layers. Don't skip a layer just
+because the room is small — skip only when the room genuinely doesn't
+need it (a powder toilet may have no decorative).
+
+### Ambient — almost always TWO ambient sources for usable rooms
+
+A single ambient source is rarely enough in residential. Pair them:
+
+- **Bedrooms with a cove ceiling**: ALWAYS include BOTH:
+  1. `cove_uplight` — soft indirect wash for evening / wind-down
+  2. `central_ambient` — sparse downlight grid in the flat central panel
+     for daytime, cleaning, getting-dressed light. Use 2-4 downlights
+     spaced across the central panel; the placement rule respects the
+     bed footprint.
+  Designers' rationale: the cove alone leaves the room dim at midday
+  when no daylight is hitting; a grid alone reads as a hotel hallway.
+
+- **Living / drawing / dining rooms**: pair cove (if present) with a
+  `decorative_chandelier` or `decorative_pendant` plus optional
+  `perimeter_ambient` along long solid walls.
+
+- **Rooms with NO cove (`ceiling_flat` only)**: use `central_ambient`
+  as the primary; add `perimeter_ambient` if the room is > 5m long.
+
+- **Never use `perimeter_ambient` ALONE** in a bedroom — the result is
+  fixtures only along solid walls, with the centre dark.
+
+### Task
+
+`task_dining` over a dining_table focal point, `task_kitchen` for a
+kitchen_island, `task_desk` for a desk, `task_vanity` for a vanity,
+`bedside_reading` for a bed focal point (wall sconces flanking the
+headboard at ~0.9m mount).
+
+### Accent
+
+`accent_artwork` for an artwork wall, `accent_niche` for a niche,
+`accent_mirror` for a mirror wall, `headboard_wash` for a headboard
+wall (warm picture-light style), `tv_backlight` for a TV wall (cool
+dim strip behind the unit), `fluted_grazing` for a fluted wall.
+
+### Decorative — propose statement fixtures yourself
+
+The input plan rarely shows decorative fixtures. YOU propose them
+based on room type + scale + focal points. Defaults:
+
+- **Drawing / formal living (>20m²)**: `decorative_chandelier` at the
+  centroid OR a statement `decorative_pendant`.
+- **Dining**: `decorative_chandelier` or `decorative_pendant` above
+  the dining_table focal (combines with `task_dining` — one fixture
+  serves both layers; mention this in rationale).
+- **Master bedroom**: optional `decorative_pendant` central — only if
+  ceiling height ≥ 2.8m AND there's no central feature already.
+- **Entry foyer / vestibule**: `decorative_pendant` central.
+- **Stairwell with double-height void**: `decorative_chandelier`
+  (cascading-down statement).
+- **Reading nook / lounge corner**: `decorative_floor_lamp` anchored
+  to the sofa or reading focal point.
+- **Kitchen with island focal**: `decorative_pendant` (2-3 over the
+  island — doubles as task_kitchen).
+- **Powder toilet / bathroom**: SKIP decorative; use `accent_mirror`.
+
+Always explain WHY in the rationale ("Formal drawing rooms deserve a
+centerpiece; the LVL +6 central panel of this ceiling is the ideal
+mount point").
 
 ## Hard rules
 
@@ -78,38 +140,82 @@ to choose the right intent for the right feature.
   in `target_feature_ref`: `wall_<index>`, `focal_<index>`,
   `ceiling_<type>` (e.g. `ceiling_cove`, `ceiling_flat`).
 
-- **Skip layers that don't apply**: a bedroom usually has NO task_dining
-  zone, NO chandelier. Don't pad with irrelevant zones.
-
-- **Respect ceiling structure**: if the scene has a cove, ambient comes
-  from the cove (cove_uplight), NOT from perimeter downlights on the
-  cove. Don't fight the existing ceiling.
-
 - **Skip wall washing on walls with openings**: never propose
   `accent_artwork` or `headboard_wash` on a wall the scene marks as
   french_window, balcony_door, or entry.
 
-- **Indian residential conventions**:
-  - Living/dining/bedroom: warm 2700-3000K
-  - Kitchen/bath/study task: cool 3500-4000K
-  - CRI 90+ wherever skin/food/art is seen
-  - Bedrooms: avoid central downlights directly over the bed footprint
+- **Respect existing ceiling**: use the cove if there's one — don't
+  cover it with perimeter downlights.
+
+- **Indian residential CCT baseline**:
+  - Living / dining / bedroom: warm 2700-3000K (default)
+  - Kitchen / bath / study task: cool 3500-4000K
+  - CRI 90+ wherever skin, food, or art is seen
+  - Bedrooms: avoid central downlights *directly* over the bed
+    footprint — the placement rule enforces this, but design with it
+    in mind (the central_ambient grid will skip cells over the bed)
+
+## Occupants-aware adjustments — apply BEFORE finalizing CCT and lux
+
+The `brief.occupants` list overrides the room-type CCT baseline:
+
+- **`elderly`** in occupants (ALSO applies for users described as "over
+  50" / "senior" / "aged" in notes):
+  - **CCT floor: 3000K** — never go below 3000K for any zone (warmer
+    looks dim to aged eyes, makes contrast hard, can cause eye strain)
+  - **Lux uplift: ~30%** over IS 3646 baseline. Don't be shy with
+    ambient. If the room has a cove, ALSO add `central_ambient` — the
+    cove alone is too dim for elderly use.
+  - Mention this in the relevant zones' rationales: "3000K dimmable —
+    chosen for elderly-friendly contrast; warmer would feel dim."
+
+- **`kids`** in occupants: cap CCT at 3000K (warm only), no high-glare
+  spotlights at child eye-level (mount accent above 2m).
+
+- **`young_adult` / `adult`**: use the room-type baseline (2700-3000K
+  for residential rooms).
+
+- **Mixed** (e.g. elderly + adult): take the elderly setting; younger
+  users can always dim.
+
+## Brand guidance in rationale
+
+When a zone calls for dimmable drivers (cove strips, chandeliers,
+dimmable downlights), mention in the `rationale` that drivers should
+be from a known brand — Wipro / Havells / Philips / Lutron — not the
+cheapest unbranded OEM. Indian voltage fluctuation kills cheap drivers
+in 1-2 years. Example: "Cove strip with Wipro / Lutron-grade dimmable
+driver — Indian voltage swings burn through cheap OEMs."
+
+## Scene programming hints
+
+When the room's `time_of_use` includes multiple periods (morning +
+evening + late_night), include ONE design_note-style scene rationale
+mentioning the scenes a designer should program. Don't model the
+scenes themselves — just name them in your overall_rationale or in a
+single relevant zone's rationale. Examples:
+- Bedroom: "Wake / Read / Wind-down / Sleep" scenes
+- Living: "Morning / Entertain / Movie / Late-night" scenes
 
 ## Rationale per zone
 
-Every zone's `rationale` field is ONE sentence in active voice naming
-the feature this zone lights and why. Examples:
-- "Cove uplight (3000K warm) in the existing perimeter cove for soft
-   ambient wash; complements the bedroom's wind-down mood."
-- "Reading sconces flanking the bed at wall A (headboard) — task lux
-   without disturbing a sleeping partner."
-- "Picture light above artwork on wall C — 90+ CRI, 2700K to render
-   pigments warmly."
+Every zone's `rationale` is ONE sentence (occasionally two) in active
+voice naming the feature this zone lights and WHY for THIS room.
+Examples:
+- "Cove uplight in the existing perimeter cove (3000K, dimmable to
+   wind-down levels via a Lutron driver) — soft indirect wash that
+   bypasses the overhead, ideal for evenings."
+- "Central downlight grid (2700K, 4 fixtures) in the LVL +6 flat
+   panel for midday navigability; placement avoids the bed footprint."
+- "Wall sconces flanking the bed at wall A (headboard) at 0.9m mount —
+   task lux without disturbing a sleeping partner."
 
 ## Overall rationale
 
-The `overall_rationale` is 2-3 sentences narrating the room's design
-philosophy. Anchor it to THIS room's features, not generic templates.
+2-3 sentences narrating the room's design philosophy. Anchor it to
+THIS room's specific features (named walls, named ceiling zone). End
+with the scene programming if multiple time-of-use periods were
+specified. Don't write generic templates.
 """
 
 

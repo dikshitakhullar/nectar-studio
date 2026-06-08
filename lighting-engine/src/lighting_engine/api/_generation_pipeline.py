@@ -238,11 +238,30 @@ def _build_plan_response_v1_designer(
         room, fixtures, target_lux=standard.target_lux,
     )
     rcp = render_rcp_svg(room, fixtures)
-    # No floor/table lamp Zones in the v1 designer yet — the furniture SVG
-    # gets just the parsed furniture + any decorative_floor_lamp zones the
-    # designer added (these come through as Fixtures, not Zones, so the
-    # current furniture renderer's lamp argument stays empty for now).
-    furniture_svg = render_furniture_svg(room, [])
+    # Surface decorative_floor_lamp / decorative_pendant zones on the
+    # furniture plan. The renderer expects brief-layer Zone objects so we
+    # project each LightingZone into a minimal Zone with a centroid-resolving
+    # position_hint — the renderer's `_resolve_lamp_position` fans multiple
+    # lamps out around the centroid so labels don't overlap.
+    from lighting_engine.brief.models import Zone as BriefZone
+    from lighting_engine.brief.models import LightingLayer as BriefLayer
+
+    lamp_intents = {
+        "decorative_floor_lamp", "decorative_pendant", "decorative_chandelier",
+    }
+    lamp_zones: list[BriefZone] = []
+    for z in design.zones:
+        if z.intent not in lamp_intents:
+            continue
+        lamp_zones.append(BriefZone(
+            layer=BriefLayer.decorative,
+            purpose=z.rationale[:80],   # furniture renderer uses this as label
+            cct_k=z.cct_k,
+            cri_min=z.cri_min,
+            fixture_type=z.fixture_archetype,
+            position_hint="center",     # v1 — render fans them around centroid
+        ))
+    furniture_svg = render_furniture_svg(room, lamp_zones)
 
     # Per-zone rationale → `design_notes`. Studio shows one per zone.
     notes = [
