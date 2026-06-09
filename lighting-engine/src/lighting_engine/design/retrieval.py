@@ -38,6 +38,33 @@ class Chunk:
 _KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 _CHUNKS_FILE = _KNOWLEDGE_DIR / "chunks.jsonl"
 
+# Residential whitelist (founder rule: we only design residential lighting).
+# Split into two buckets:
+#   1. Residential-specific docs (always include)
+#   2. Horizontal docs that apply universally — design principles, daylight,
+#      controls, vision science, LED sources, circadian. These are NOT
+#      domain-specific to commercial; they apply to residential too.
+# Everything else (offices, retail, healthcare, roadway, industrial,
+# museums, theaters, sports, airports, etc.) is excluded so noise from
+# other verticals doesn't surface in residential queries.
+_RESIDENTIAL_DOC_IDS: frozenset[str] = frozenset({
+    # Residential-specific
+    "RP-11-20",   # Residential Environments
+    "RP-28-20",   # Lighting for Older Adults and Visually Impaired
+    # Universal — design principles applicable to residential
+    "LP-1-20",    # Designing Quality Lighting for People
+    "LP-3-20",    # Daylighting (windows / French windows)
+    "LP-4-20",    # Light Sources (LED / CCT / CRI)
+    "LP-6-20",    # Lighting Controls (dimming, scenes)
+    "LP-16-22",   # Control Intent Narratives (scene programming)
+    "LS-2-20",    # Concepts and Language of Lighting (terminology)
+    "LS-8-20",    # Vision — Perceptions and Performance
+    "TM-18-18",   # Visual, Circadian, Neuroendocrine effects
+    "TM-24-20",   # Recommended Illuminance Adjustment (older adults uplift)
+    "RP-42-20",   # Dimming and Control Method Designations
+    "RP-46-23",   # Physiological and Behavioral Effects of light
+})
+
 # Single regex strips light HTML / markdown noise and runs of whitespace.
 _TOKEN_SPLIT = re.compile(r"[^a-zA-Z0-9]+")
 
@@ -48,7 +75,13 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _load_chunks() -> list[Chunk]:
-    """Read every line of chunks.jsonl into a Chunk."""
+    """Read every line of chunks.jsonl into a Chunk, filtered to residential.
+
+    Non-residential vertical docs (commercial offices, retail, healthcare,
+    roadway, industrial, museums, theaters, sports, etc.) are skipped at
+    load time so they never compete for the BM25 top-K. See
+    `_RESIDENTIAL_DOC_IDS` for the active whitelist.
+    """
     if not _CHUNKS_FILE.exists():
         return []
     out: list[Chunk] = []
@@ -60,8 +93,11 @@ def _load_chunks() -> list[Chunk]:
             data = json.loads(line)
         except json.JSONDecodeError:
             continue
+        doc_id = data.get("doc_id", "?")
+        if doc_id not in _RESIDENTIAL_DOC_IDS:
+            continue
         out.append(Chunk(
-            doc_id=data.get("doc_id", "?"),
+            doc_id=doc_id,
             title=data.get("title", "?"),
             series=data.get("series", "?"),
             page=int(data.get("page", 0)),
