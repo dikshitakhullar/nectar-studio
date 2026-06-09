@@ -29,6 +29,10 @@ from lighting_engine.brief.models import (
     StandardsSnapshot,
 )
 from lighting_engine.design.intent import RoomDesign
+from lighting_engine.design.retrieval import (
+    format_chunks_for_prompt,
+    retrieve,
+)
 from lighting_engine.design.scene import RoomScene
 
 MODEL_ID = "claude-opus-4-7"
@@ -44,6 +48,18 @@ Each LightingZone names ONE design intent tied to ONE specific feature in
 the scene (a specific wall, ceiling zone, or focal point). The downstream
 placement rule library turns each zone into fixture positions; your job is
 to choose the right intent for the right feature.
+
+## You have a retrieved-knowledge section in each user message
+
+The user message may include a `# Retrieved IES Library guidance` section
+containing top-K excerpts from the IES Lighting Library (IES RP / LP / LM
+series). Use this as authoritative reference for design recommendations,
+elderly visibility data, layered-lighting principles, and residential
+practice. Where retrieved guidance shapes a zone, cite it briefly
+("per IES RP-11, residential bedrooms...") in that zone's rationale.
+
+If the section is missing or empty, fall back to your training knowledge
+of residential lighting design — no behavior change.
 
 ## Core design philosophy (READ FIRST — overrides everything below)
 
@@ -247,6 +263,32 @@ def _catalog_summary(catalog: list[FixtureCatalogOption]) -> str:
     )
 
 
+def _build_retrieval_query(
+    *,
+    scene: RoomScene,
+    brief: DesignerBrief,
+    room_type: str,
+) -> str:
+    """Compose a BM25 query from the room context.
+
+    Includes room_type, occupants (so elderly / kids surface relevant
+    guidance), the ceiling structure, focal-point types, and the
+    intent keyword 'layered' so the retrieval pulls layered-lighting
+    guidance rather than generic prose.
+    """
+    parts: list[str] = [f"{room_type} lighting design"]
+    if brief.occupants:
+        parts.append("for " + " ".join(brief.occupants) + " occupants")
+    ceiling_types = sorted({cz.type for cz in scene.ceiling})
+    if ceiling_types:
+        parts.append(" ".join(ceiling_types) + " ceiling")
+    focal_types = sorted({fp.type for fp in scene.focal_points})
+    if focal_types:
+        parts.append("with " + ", ".join(focal_types))
+    parts.append("layered ambient task accent decorative dimming")
+    return " ".join(parts)
+
+
 def _format_user_message(
     *,
     scene: RoomScene,
@@ -256,6 +298,21 @@ def _format_user_message(
     room_name: str,
     room_type: str,
 ) -> str:
+    # Retrieve IES guidance for THIS room's context. Empty list if the
+    # corpus isn't ingested — falls back to LLM-internal knowledge.
+    retrieval_query = _build_retrieval_query(
+        scene=scene, brief=brief, room_type=room_type,
+    )
+    retrieved = retrieve(retrieval_query, k=6)
+    ies_block = format_chunks_for_prompt(retrieved, max_chars=6000)
+    ies_section = (
+        f"# Retrieved IES Library guidance "
+        f"(top {len(retrieved)} relevant excerpts)\n"
+        f"Cite these in your zone rationales by doc-id + page where "
+        f"directly applicable. Don't quote verbatim; paraphrase the "
+        f"recommendation in your own words.\n\n{ies_block}\n\n"
+    ) if retrieved else ""
+
     return (
         f"# Room\n"
         f"- name: {room_name}\n"
@@ -265,10 +322,12 @@ def _format_user_message(
         f"# Standards (IS 3646 targets)\n"
         f"```json\n{_standards_summary(standards)}\n```\n\n"
         f"# Fixture catalog\n```json\n{_catalog_summary(catalog)}\n```\n\n"
+        f"{ies_section}"
         f"Return a RoomDesign with one LightingZone per design intent tied "
         f"to a specific feature in THIS room's scene. Use the layered "
         f"approach (ambient + task + accent + decorative — skip layers that "
-        f"don't apply)."
+        f"don't apply). Where the retrieved IES guidance shapes a decision, "
+        f"reference it briefly in that zone's rationale."
     )
 
 
