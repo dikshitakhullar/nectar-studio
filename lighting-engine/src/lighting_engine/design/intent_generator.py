@@ -87,44 +87,43 @@ Most residential rooms get all four layers. Don't skip a layer just
 because the room is small — skip only when the room genuinely doesn't
 need it (a powder toilet may have no decorative).
 
-### Ambient — EVERY room gets DENSE EVEN COVERAGE
+### Ambient — pick ONE downlight strategy + cove (if it exists)
 
-The Indian-residential default is bright dimmable downlight coverage
-throughout the room, then mood comes from dimming or scene-switching.
-NEVER design for the dim end — design for the brightest end.
+The Indian-residential default is bright dimmable downlight coverage,
+mood from dimming / scene-switching. But the **downlight coverage
+should NOT double up** — pick ONE strategy, not central + perimeter
+stacked together (that creates a visual mess: two parallel rows of
+fixtures along every wall).
 
-**Mandatory for every room** (unless the room has no solid walls at
-all — extremely rare):
+**Pick exactly ONE downlight pattern per room:**
 
-1. `central_ambient` — downlight grid covering the central area. The
-   placement rule produces ~2m spacing which lands corners + spread
-   for normal rooms; respect this and let the rule do its work.
+- **`central_ambient`** — grid downlights covering the central area.
+  Use this for most rooms (bedrooms, dining, kitchen, small lounges).
+  The placement rule produces ~2m spacing which gives corner + spread
+  coverage for normal rooms.
 
-2. `perimeter_ambient` — downlights along solid walls (the placement
-   rule skips walls with openings). This is the perimeter wash on top
-   of the central grid. Use `wall_sconce` archetype ONLY if you
-   specifically want sconces on a wall (not as a substitute for
-   downlights — they are a different layer).
+- **`perimeter_ambient`** — downlights only along solid walls (no
+  central grid). Use this for **large** rooms (>30 sqm) where the
+  central area is occupied by furniture clusters and a grid would
+  put fixtures over the furniture.
 
-The pair of central + perimeter is the *baseline*. You ALWAYS request
-both. Single-ambient designs (only central, only perimeter, only cove)
-are wrong — they leave parts of the room dim.
+  ⚠️ Never request both `central_ambient` AND `perimeter_ambient`
+  for the same room — they double up.
 
-**Add on top of the baseline** when the scene calls for it:
+**Add cove uplight ON TOP** when the scene has `ceiling_cove`:
 
-- **`cove_uplight`** — strip in the cove pocket (when scene has
-  `ceiling_cove`). This is INDIRECT, not a replacement for downlights.
-  Cove pairs with central + perimeter; it never substitutes.
+- `cove_uplight` — continuous strip in the cove pocket (rendered as
+  ONE strip per solid wall, not many dots). Indirect, separate dimmer.
+  Pairs with the downlight strategy you picked above.
 
-- **`level_change_uplight`** — strip under raised slab (when scene
-  has level changes).
+**Add other ambient when the scene shows it:**
 
-- **`fluted_grazing`** — grazers above a fluted wall (when scene
-  marks a wall as `fluted`).
+- `level_change_uplight` — strip under a raised slab.
+- `fluted_grazing` — grazers above a fluted wall.
 
-Mental model for a typical bedroom or drawing room: cove uplight +
-central grid + perimeter downlights = three independently-dimmable
-ambient layers. Designer programs scenes that combine them.
+Mental model for a typical room: cove uplight (if cove exists) +
+**ONE** of central_ambient OR perimeter_ambient = two independently-
+dimmable ambient layers, not three.
 
 ### Task
 

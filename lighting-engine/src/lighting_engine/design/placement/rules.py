@@ -124,11 +124,14 @@ def _get_wall(zone: LightingZone, room: Room) -> WallEdge | None:
 def place_cove_uplight(
     zone: LightingZone, room: Room, scene: RoomScene,
 ) -> list[Fixture]:
-    """Strip along the room perimeter (1m segments), pointing up into the cove.
+    """One continuous strip per solid wall — represents the cove pocket.
 
-    We don't have the cove pocket geometry in v1 (RCP parsing is v1.1), so
-    we approximate: place strip segments at each wall midpoint inset 30cm
-    from the wall. The renderer draws these as wall-perimeter strips.
+    A cove is a *continuous* strip hidden in the ceiling pocket; rendering
+    it as N dots along the wall (one per 1.5m) creates visual confusion
+    with downlight rows. Instead emit ONE 'strip' fixture per solid wall,
+    positioned at the wall midpoint, with the wall length stored on the
+    fixture for the renderer to draw as a line later (v1.1: real cove
+    pocket geometry from the parsed RCP).
     """
     edges = wall_edges(room)
     fixtures: list[Fixture] = []
@@ -137,23 +140,13 @@ def place_cove_uplight(
         # Skip walls with openings — coves don't run over doors/windows
         if wall_has_opening(edge.index, room):
             continue
-        # One strip segment per ~1.5m of wall length
-        segment_count = max(1, int(edge.length_m / 1.5))
-        positions = evenly_spaced_along_edge(
-            edge, count=segment_count, inset_m=inset,
-        )
-        for pos in positions:
-            inside = offset_into_room(WallEdge(
-                index=edge.index, a=edge.a, b=edge.b,
-                midpoint=pos, length_m=edge.length_m,
-                outward_nx=edge.outward_nx, outward_ny=edge.outward_ny,
-            ), inset)
-            fixtures.append(_fixture(
-                room=room, zone=zone, layer=LightingLayer.ambient,
-                position=inside, fixture_type="strip",
-                index=len(fixtures),
-                mount_height_m=room.ceiling_height_m,
-            ))
+        inside = offset_into_room(edge, inset)
+        fixtures.append(_fixture(
+            room=room, zone=zone, layer=LightingLayer.ambient,
+            position=inside, fixture_type="strip",
+            index=len(fixtures),
+            mount_height_m=room.ceiling_height_m,
+        ))
     return fixtures
 
 
