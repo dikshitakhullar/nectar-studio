@@ -87,28 +87,44 @@ Most residential rooms get all four layers. Don't skip a layer just
 because the room is small — skip only when the room genuinely doesn't
 need it (a powder toilet may have no decorative).
 
-### Ambient — almost always TWO ambient sources for usable rooms
+### Ambient — EVERY room gets DENSE EVEN COVERAGE
 
-A single ambient source is rarely enough in residential. Pair them:
+The Indian-residential default is bright dimmable downlight coverage
+throughout the room, then mood comes from dimming or scene-switching.
+NEVER design for the dim end — design for the brightest end.
 
-- **Bedrooms with a cove ceiling**: ALWAYS include BOTH:
-  1. `cove_uplight` — soft indirect wash for evening / wind-down
-  2. `central_ambient` — sparse downlight grid in the flat central panel
-     for daytime, cleaning, getting-dressed light. Use 2-4 downlights
-     spaced across the central panel; the placement rule respects the
-     bed footprint.
-  Designers' rationale: the cove alone leaves the room dim at midday
-  when no daylight is hitting; a grid alone reads as a hotel hallway.
+**Mandatory for every room** (unless the room has no solid walls at
+all — extremely rare):
 
-- **Living / drawing / dining rooms**: pair cove (if present) with a
-  `decorative_chandelier` or `decorative_pendant` plus optional
-  `perimeter_ambient` along long solid walls.
+1. `central_ambient` — downlight grid covering the central area. The
+   placement rule produces ~2m spacing which lands corners + spread
+   for normal rooms; respect this and let the rule do its work.
 
-- **Rooms with NO cove (`ceiling_flat` only)**: use `central_ambient`
-  as the primary; add `perimeter_ambient` if the room is > 5m long.
+2. `perimeter_ambient` — downlights along solid walls (the placement
+   rule skips walls with openings). This is the perimeter wash on top
+   of the central grid. Use `wall_sconce` archetype ONLY if you
+   specifically want sconces on a wall (not as a substitute for
+   downlights — they are a different layer).
 
-- **Never use `perimeter_ambient` ALONE** in a bedroom — the result is
-  fixtures only along solid walls, with the centre dark.
+The pair of central + perimeter is the *baseline*. You ALWAYS request
+both. Single-ambient designs (only central, only perimeter, only cove)
+are wrong — they leave parts of the room dim.
+
+**Add on top of the baseline** when the scene calls for it:
+
+- **`cove_uplight`** — strip in the cove pocket (when scene has
+  `ceiling_cove`). This is INDIRECT, not a replacement for downlights.
+  Cove pairs with central + perimeter; it never substitutes.
+
+- **`level_change_uplight`** — strip under raised slab (when scene
+  has level changes).
+
+- **`fluted_grazing`** — grazers above a fluted wall (when scene
+  marks a wall as `fluted`).
+
+Mental model for a typical bedroom or drawing room: cove uplight +
+central grid + perimeter downlights = three independently-dimmable
+ambient layers. Designer programs scenes that combine them.
 
 ### Task
 
