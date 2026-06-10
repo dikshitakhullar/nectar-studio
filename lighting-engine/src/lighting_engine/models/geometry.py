@@ -119,6 +119,11 @@ class Fixture(BaseModel):
     cct_k: int | None = None
     cri: int | None = None
     beam_angle_deg: float | None = None
+    # For wall-anchored *linear* fixtures (cove strips, headboard washes,
+    # fluted grazers, TV backlight, level-change uplift) — the polygon edge
+    # this fixture runs along. The RCP renderer draws these as lines along
+    # the wall instead of dots. None = point-style fixture (most things).
+    wall_index: int | None = None
 
 
 class CeilingFeature(BaseModel):

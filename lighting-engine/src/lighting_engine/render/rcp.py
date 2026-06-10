@@ -73,6 +73,57 @@ def _radius_for_layer(layer: LightingLayer) -> float:
     return _LAYER_RADIUS.get(layer, _RADIUS_DEFAULT)
 
 
+# How far inward from the wall (meters) a strip renders. The cove pocket is
+# above the false ceiling; in plan view the strip reads as a line just inside
+# the wall edge so it doesn't sit on top of the wall outline.
+_STRIP_INSET_M: float = 0.30
+
+
+def _is_wall_strip(fixture: Fixture, room: Room) -> bool:
+    """A wall-anchored linear fixture renders as a line, not a dot."""
+    if fixture.type != "strip":
+        return False
+    if fixture.wall_index is None:
+        return False
+    return 0 <= fixture.wall_index < len(room.polygon)
+
+
+def _strip_endpoints(fixture: Fixture, room: Room) -> tuple[Point, Point, float]:
+    """Compute the (start, end) of a wall-strip line, inset slightly into the room.
+
+    The strip runs along the polygon edge `wall_index`. We trim 25cm off
+    each end so the strip doesn't crash into the corner.
+    """
+    import math
+    assert fixture.wall_index is not None
+    n = len(room.polygon)
+    a = room.polygon[fixture.wall_index]
+    b = room.polygon[(fixture.wall_index + 1) % n]
+    # Edge vector + length
+    ex, ey = b.x - a.x, b.y - a.y
+    length = math.hypot(ex, ey) or 1.0
+    ux, uy = ex / length, ey / length
+    # Outward normal (perpendicular to edge, pointing away from centroid)
+    cx = sum(p.x for p in room.polygon) / n
+    cy = sum(p.y for p in room.polygon) / n
+    nx, ny = -ey / length, ex / length
+    mid_x, mid_y = (a.x + b.x) / 2, (a.y + b.y) / 2
+    if (mid_x - cx) * nx + (mid_y - cy) * ny < 0:
+        nx, ny = -nx, -ny
+    # Inward normal (push the strip slightly into the room)
+    inx, iny = -nx, -ny
+    corner_trim = 0.25
+    start = Point(
+        x=a.x + ux * corner_trim + inx * _STRIP_INSET_M,
+        y=a.y + uy * corner_trim + iny * _STRIP_INSET_M,
+    )
+    end = Point(
+        x=b.x - ux * corner_trim + inx * _STRIP_INSET_M,
+        y=b.y - uy * corner_trim + iny * _STRIP_INSET_M,
+    )
+    return start, end, _STRIP_INSET_M
+
+
 def render_rcp_svg(room: Room, fixtures: list[Fixture]) -> str:
     """Return a self-contained ``<svg>`` string for the room + placed fixtures.
 
@@ -112,13 +163,30 @@ def render_rcp_svg(room: Room, fixtures: list[Fixture]) -> str:
     pts = " ".join(f"{x(p.x):.1f},{y(p.y):.1f}" for p in room.polygon)
     parts.append(f'<polygon class="room-poly" points="{pts}"/>')
 
-    # Fixtures
+    # Fixtures — wall-anchored strips render as LINES along the wall,
+    # everything else renders as point glyphs (circles).
     for fx in fixtures:
         cls = _layer_class(fx.layer)
         color = _color_for_cct(fx.cct_k)
-        r = _radius_for_layer(fx.layer)
         cct_label = html.escape(str(fx.cct_k) if fx.cct_k is not None else "?")
         watt = fx.wattage_w if fx.wattage_w is not None else 0.0
+
+        if _is_wall_strip(fx, room):
+            # Continuous strip along the wall edge — render as a line
+            a, b, inset_m = _strip_endpoints(fx, room)
+            parts.append(
+                f'<line class="strip-{fx.layer.value}" '
+                f'x1="{x(a.x):.1f}" y1="{y(a.y):.1f}" '
+                f'x2="{x(b.x):.1f}" y2="{y(b.y):.1f}" '
+                f'stroke="{color}" stroke-width="6" stroke-linecap="round" '
+                f'opacity="0.9">'
+                f"<title>{html.escape(fx.reasoning or fx.type)} · "
+                f"{cct_label}K · {watt:.0f}W</title>"
+                "</line>"
+            )
+            continue
+
+        r = _radius_for_layer(fx.layer)
         parts.append(
             f'<circle class="{cls}" cx="{x(fx.position.x):.1f}" '
             f'cy="{y(fx.position.y):.1f}" r="{r:.1f}" fill="{color}">'

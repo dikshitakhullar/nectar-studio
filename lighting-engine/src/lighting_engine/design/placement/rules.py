@@ -58,8 +58,14 @@ def _fixture(
     fixture_type: str,
     index: int,
     mount_height_m: float | None = None,
+    wall_index: int | None = None,
 ) -> Fixture:
-    """Construct a Fixture with photometric defaults from the archetype."""
+    """Construct a Fixture with photometric defaults from the archetype.
+
+    Pass `wall_index` for wall-anchored linear fixtures (cove strip,
+    headboard wash, TV backlight, fluted grazing) so the renderer draws
+    them as lines along the wall instead of dots.
+    """
     defaults = _ARCHETYPE_DEFAULTS.get(fixture_type, {})
     return Fixture(
         id=f"{room.id}-{zone.intent}-{index:02d}",
@@ -74,6 +80,7 @@ def _fixture(
         cct_k=zone.cct_k,
         cri=zone.cri_min,
         beam_angle_deg=zone.beam_deg or defaults.get("beam_deg"),
+        wall_index=wall_index,
     )
 
 
@@ -146,6 +153,7 @@ def place_cove_uplight(
             position=inside, fixture_type="strip",
             index=len(fixtures),
             mount_height_m=room.ceiling_height_m,
+            wall_index=edge.index,
         ))
     return fixtures
 
@@ -356,6 +364,7 @@ def place_headboard_wash(
         fixtures.append(_fixture(
             room=room, zone=zone, layer=LightingLayer.accent,
             position=inset, fixture_type="picture_light", index=i,
+            wall_index=edge.index,
         ))
     return fixtures
 
@@ -382,6 +391,7 @@ def place_tv_backlight(
         room=room, zone=zone, layer=LightingLayer.accent,
         position=pos, fixture_type="strip", index=0,
         mount_height_m=1.2,
+        wall_index=edge.index,
     )]
 
 
@@ -413,6 +423,7 @@ def place_fluted_grazing(
         fixtures.append(_fixture(
             room=room, zone=zone, layer=LightingLayer.accent,
             position=inset, fixture_type="track_spot", index=i,
+            wall_index=edge.index,
         ))
     return fixtures
 
