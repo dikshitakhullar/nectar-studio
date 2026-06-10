@@ -187,9 +187,44 @@ def render_rcp_svg(room: Room, fixtures: list[Fixture]) -> str:
             continue
 
         r = _radius_for_layer(fx.layer)
+        cx_px = x(fx.position.x)
+        cy_px = y(fx.position.y)
+
+        if fx.layer == LightingLayer.accent:
+            # Diamond — visually distinct from downlight dots
+            d = r + 1.5
+            diamond = (
+                f"{cx_px:.1f},{cy_px - d:.1f} "
+                f"{cx_px + d:.1f},{cy_px:.1f} "
+                f"{cx_px:.1f},{cy_px + d:.1f} "
+                f"{cx_px - d:.1f},{cy_px:.1f}"
+            )
+            parts.append(
+                f'<polygon class="{cls}" points="{diamond}" fill="{color}" '
+                f'stroke="#6b5300" stroke-width="1.2">'
+                f"<title>accent · {html.escape(fx.type)} · "
+                f"{cct_label}K · {watt:.0f}W</title>"
+                "</polygon>"
+            )
+            continue
+
+        if fx.layer == LightingLayer.task:
+            # Square — task fixtures (under-cabinet strips, task downlights)
+            d = r
+            parts.append(
+                f'<rect class="{cls}" x="{cx_px - d:.1f}" '
+                f'y="{cy_px - d:.1f}" width="{d * 2:.1f}" '
+                f'height="{d * 2:.1f}" fill="{color}" '
+                f'stroke="#6b5300" stroke-width="1">'
+                f"<title>task · {html.escape(fx.type)} · "
+                f"{cct_label}K · {watt:.0f}W</title>"
+                "</rect>"
+            )
+            continue
+
         parts.append(
-            f'<circle class="{cls}" cx="{x(fx.position.x):.1f}" '
-            f'cy="{y(fx.position.y):.1f}" r="{r:.1f}" fill="{color}">'
+            f'<circle class="{cls}" cx="{cx_px:.1f}" '
+            f'cy="{cy_px:.1f}" r="{r:.1f}" fill="{color}">'
             f"<title>{html.escape(fx.layer.value)} · "
             f"{cct_label}K · {watt:.0f}W</title>"
             "</circle>"
