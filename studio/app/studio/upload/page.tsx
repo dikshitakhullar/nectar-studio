@@ -27,13 +27,13 @@ export default function UploadPage() {
   const furnitureRef = useRef<HTMLInputElement>(null);
 
   const sizeError = ceiling && ceiling.size > MAX_UPLOAD_BYTES
-    ? `Ceiling file is ${bytesToHuman(ceiling.size)} — max upload is ${bytesToHuman(MAX_UPLOAD_BYTES)}.`
+    ? `Floor-plan file is ${bytesToHuman(ceiling.size)} — max upload is ${bytesToHuman(MAX_UPLOAD_BYTES)}.`
     : null;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ceiling) {
-      setError("Pick a ceiling DWG/DXF before continuing.");
+      setError("Pick an architectural floor-plan DWG/DXF before continuing.");
       return;
     }
     if (sizeError) {
@@ -77,9 +77,13 @@ export default function UploadPage() {
         <div className="text-xs uppercase tracking-[0.2em] text-amber-700/90">Upload</div>
         <h1 className="text-2xl font-light tracking-tight text-stone-900">Your project files</h1>
         <p className="text-stone-600 text-sm">
-          Drop your ceiling and furniture DWG/DXF. The engine parses the ceiling
-          to find rooms; the furniture file is stored for v1.1 but ignored for
-          the v1 plan.
+          Drop your architectural floor plan + furniture DWG/DXF. The engine
+          parses the floor plan to extract rooms, walls, doors, and windows.
+          The furniture file is parsed for table / sofa / bed footprints.
+        </p>
+        <p className="text-xs text-stone-500">
+          Reflected-Ceiling-Plan (RCP) parsing is v1.1 — for now upload the
+          architectural floor plan in the first slot, not the RCP.
         </p>
       </div>
 
@@ -97,12 +101,12 @@ export default function UploadPage() {
 
         <FilePicker
           inputRef={ceilingRef}
-          label="Ceiling plan (RCP)"
+          label="Architectural floor plan"
           required
           file={ceiling}
           onChange={setCeiling}
           accept=".dwg,.dxf"
-          description="The architectural reflected-ceiling plan."
+          description="DWG/DXF with walls, rooms, doors, and windows. Not the RCP."
         />
 
         <FilePicker
@@ -112,7 +116,7 @@ export default function UploadPage() {
           file={furniture}
           onChange={setFurniture}
           accept=".dwg,.dxf"
-          description="Stored for v1.1 — the v1 parser ignores it."
+          description="DWG/DXF with furniture blocks (beds, sofas, tables, etc.)."
         />
 
         {sizeError && <div className="text-xs text-red-700">{sizeError}</div>}
